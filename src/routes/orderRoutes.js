@@ -173,6 +173,9 @@ router.post('/', async (req, res, next) => {
     });
   } catch (error) {
     next(error);
+  }
+});
+
 // PATCH /api/orders/:id/status - Update order status
 router.patch('/:id/status', async (req, res, next) => {
   try {
