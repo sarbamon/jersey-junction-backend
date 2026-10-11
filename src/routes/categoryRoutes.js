@@ -31,7 +31,7 @@ async function seedCategoriesIfEmpty() {
 router.get('/', async (req, res) => {
   try {
     await seedCategoriesIfEmpty();
-    const categories = await Category.find({ status: 'Active' }).sort({ createdAt: 1 });
+    const categories = await Category.find({ status: 'Active' }).sort({ order: 1, createdAt: 1 });
     res.json({ success: true, count: categories.length, data: categories });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -42,7 +42,28 @@ router.get('/', async (req, res) => {
 router.get('/admin/all', async (req, res) => {
   try {
     await seedCategoriesIfEmpty();
-    const categories = await Category.find().sort({ createdAt: 1 });
+    const categories = await Category.find().sort({ order: 1, createdAt: 1 });
+    res.json({ success: true, count: categories.length, data: categories });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// PUT /api/categories/reorder - Update order of categories
+router.put('/reorder', async (req, res) => {
+  try {
+    const { orderedIds } = req.body;
+    if (Array.isArray(orderedIds)) {
+      const updates = orderedIds.map((id, index) => {
+        const isObjectId = typeof id === 'string' && id.match(/^[0-9a-fA-F]{24}$/);
+        return Category.updateOne(
+          isObjectId ? { _id: id } : { $or: [{ slug: id }, { name: id }] },
+          { $set: { order: index } }
+        );
+      });
+      await Promise.all(updates);
+    }
+    const categories = await Category.find().sort({ order: 1, createdAt: 1 });
     res.json({ success: true, count: categories.length, data: categories });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -58,12 +79,16 @@ router.post('/', async (req, res) => {
     if (existing) {
       return res.status(400).json({ success: false, message: 'Category with this slug already exists' });
     }
+    const maxCat = await Category.findOne().sort({ order: -1 });
+    const nextOrder = maxCat && typeof maxCat.order === 'number' ? maxCat.order + 1 : 0;
+
     const category = await Category.create({
       name,
       slug: catSlug,
       tag: tag || 'Sport Collection',
       image: image || '/jersey/WhatsApp Image 2026-09-08 at 11.44.00 PM.jpeg',
       status: status || 'Active',
+      order: nextOrder,
     });
     res.status(201).json({ success: true, data: category });
   } catch (error) {

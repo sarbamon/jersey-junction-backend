@@ -47,8 +47,15 @@ const limiter = rateLimit({
 });
 app.use('/api', limiter);
 
-// Body parser
-app.use(express.json({ limit: '10mb' }));
+// Body parser (preserve rawBody for webhook signature verification)
+app.use(
+  express.json({
+    limit: '10mb',
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // Cookie parser

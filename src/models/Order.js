@@ -84,6 +84,19 @@ const orderSchema = new mongoose.Schema(
       type: String,
       default: () => new Date().toISOString().split('T')[0],
     },
+    razorpayOrderId: {
+      type: String,
+      default: '',
+      index: true,
+    },
+    razorpayPaymentId: {
+      type: String,
+      default: '',
+    },
+    stockDeducted: {
+      type: Boolean,
+      default: false,
+    },
     timeline: [timelineSchema],
   },
   {

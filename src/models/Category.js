@@ -26,6 +26,10 @@ const categorySchema = new mongoose.Schema(
       enum: ['Active', 'Disabled'],
       default: 'Active',
     },
+    order: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,

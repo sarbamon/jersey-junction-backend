@@ -91,6 +91,10 @@ const productSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    isCustomizable: {
+      type: Boolean,
+      default: false,
+    },
     status: {
       type: String,
       enum: ['Active', 'Draft', 'Out of Stock'],
@@ -110,6 +114,10 @@ const productSchema = new mongoose.Schema(
     sizes: {
       type: [String],
       default: ['S', 'M', 'L', 'XL', '2XL'],
+    },
+    sizeStock: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
     },
     defaultName: String,
     defaultNumber: String,

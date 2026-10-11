@@ -1,5 +1,6 @@
 const express = require('express');
 const Product = require('../models/Product');
+const Order = require('../models/Order');
 const { protect, authorize } = require('../middleware/auth');
 
 const router = express.Router();
@@ -12,6 +13,8 @@ const formatProduct = (p) => {
     id: doc._id.toString(),
     sizes: doc.sizes && doc.sizes.length ? doc.sizes : (doc.availableSizes || ['S', 'M', 'L', 'XL', '2XL']),
     availableSizes: doc.availableSizes && doc.availableSizes.length ? doc.availableSizes : (doc.sizes || ['S', 'M', 'L', 'XL', '2XL']),
+    sizeStock: doc.sizeStock || {},
+    isCustomizable: Boolean(doc.isCustomizable),
   };
 };
 
@@ -67,7 +70,7 @@ router.get('/', async (req, res, next) => {
       ];
     }
 
-    let reqQuery = Product.find(query);
+    let reqQuery = Product.find(query).lean();
 
     if (sort) {
       const sortBy = sort.split(',').join(' ');
@@ -82,10 +85,13 @@ router.get('/', async (req, res, next) => {
 
     reqQuery = reqQuery.skip(startIndex).limit(limitNum);
 
-    const products = await reqQuery;
-    const total = await Product.countDocuments(query);
+    const [products, total] = await Promise.all([
+      reqQuery,
+      Product.countDocuments(query),
+    ]);
     const formatted = products.map(formatProduct);
 
+    res.set('Cache-Control', 'public, max-age=15, stale-while-revalidate=60');
     res.status(200).json({
       success: true,
       count: formatted.length,
@@ -104,16 +110,51 @@ router.get('/:id', async (req, res, next) => {
   try {
     const isObjectId = req.params.id.match(/^[0-9a-fA-F]{24}$/);
     const product = isObjectId
-      ? await Product.findById(req.params.id)
-      : await Product.findOne({ slug: req.params.id });
+      ? await Product.findById(req.params.id).lean()
+      : await Product.findOne({ slug: req.params.id }).lean();
 
     if (!product) {
       return res.status(404).json({ success: false, error: 'Product not found' });
     }
 
+    const formatted = formatProduct(product);
+
+    // Compute live sales telemetry only when requested (e.g., admin dashboard)
+    if (req.query.telemetry === 'true') {
+      try {
+        const orders = await Order.find({ orderStatus: { $ne: 'Cancelled' } }).lean();
+        let liveSold = 0;
+        let liveRevenue = 0;
+        const prodIdStr = product._id.toString();
+        const prodSlug = (product.slug || '').toLowerCase();
+        const prodName = (product.name || '').toLowerCase().trim();
+
+        orders.forEach(o => {
+          if (Array.isArray(o.items)) {
+            o.items.forEach(item => {
+              const itemProdId = (item.productId || '').toString().toLowerCase();
+              const itemName = (item.name || '').toLowerCase().trim();
+              if (itemProdId === prodIdStr || itemProdId === prodSlug || itemName === prodName) {
+                const qty = Number(item.quantity) || 1;
+                const unitP = Number(item.unitPrice) || product.price || 0;
+                liveSold += qty;
+                liveRevenue += (qty * unitP);
+              }
+            });
+          }
+        });
+
+        formatted.totalSold = Math.max(Number(product.totalSold) || 0, liveSold);
+        formatted.revenueGenerated = Math.max(Number(product.revenueGenerated) || 0, liveRevenue);
+      } catch (calcErr) {
+        console.error('Error computing live product sales:', calcErr);
+      }
+    }
+
+    res.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=120');
     res.status(200).json({
       success: true,
-      data: formatProduct(product),
+      data: formatted,
     });
   } catch (err) {
     next(err);
@@ -137,6 +178,21 @@ router.post('/', protect, authorize('admin'), async (req, res, next) => {
       productData.availableSizes = productData.sizes;
     }
 
+    if (productData.sizeStock && typeof productData.sizeStock === 'object') {
+      const stockSum = Object.values(productData.sizeStock).reduce((sum, val) => sum + (Number(val) || 0), 0);
+      productData.stock = stockSum;
+      const inStockSizes = Object.entries(productData.sizeStock)
+        .filter(([_, qty]) => Number(qty) > 0)
+        .map(([size]) => size);
+      if (inStockSizes.length > 0) {
+        productData.availableSizes = inStockSizes;
+        productData.sizes = inStockSizes;
+      }
+    }
+    if (productData.isCustomizable !== undefined) {
+      productData.isCustomizable = Boolean(productData.isCustomizable);
+    }
+
     const product = await Product.create(productData);
     res.status(201).json({
       success: true,
@@ -158,6 +214,22 @@ const updateProductHandler = async (req, res, next) => {
     const updateData = { ...req.body };
     if (updateData.sizes && !updateData.availableSizes) {
       updateData.availableSizes = updateData.sizes;
+    }
+
+    if (updateData.sizeStock && typeof updateData.sizeStock === 'object') {
+      const stockSum = Object.values(updateData.sizeStock).reduce((sum, val) => sum + (Number(val) || 0), 0);
+      updateData.stock = stockSum;
+      const inStockSizes = Object.entries(updateData.sizeStock)
+        .filter(([_, qty]) => Number(qty) > 0)
+        .map(([size]) => size);
+      if (inStockSizes.length > 0) {
+        updateData.availableSizes = inStockSizes;
+        updateData.sizes = inStockSizes;
+      }
+    }
+
+    if (updateData.isCustomizable !== undefined) {
+      updateData.isCustomizable = Boolean(updateData.isCustomizable);
     }
 
     const product = await Product.findOneAndUpdate(query, updateData, {

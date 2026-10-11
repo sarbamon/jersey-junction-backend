@@ -90,6 +90,64 @@ router.post('/login', async (req, res, next) => {
   }
 });
 
+// @route   POST /api/auth/google
+// @desc    Register or login user with Google
+// @access  Public
+router.post('/google', async (req, res, next) => {
+  try {
+    let { email, name, credential, accessToken } = req.body;
+
+    if (accessToken) {
+      try {
+        const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (userInfoRes.ok) {
+          const userInfo = await userInfoRes.json();
+          email = userInfo.email || email;
+          name = userInfo.name || name;
+        }
+      } catch (err) {
+        console.error('Google userInfo fetch error:', err);
+      }
+    }
+
+    if (credential) {
+      try {
+        const decoded = jwt.decode(credential);
+        if (decoded && decoded.email) {
+          email = decoded.email;
+          name = decoded.name || name;
+        }
+      } catch (e) {
+        console.error('Google JWT decode error:', e);
+      }
+    }
+
+    if (!email) {
+      return res.status(400).json({ success: false, error: 'Google email is required' });
+    }
+
+    let user = await User.findOne({ email });
+
+    if (!user) {
+      // Create new user in MongoDB
+      const randomPassword = Math.random().toString(36).substring(2, 15) + '!A1';
+      user = await User.create({
+        name: name || email.split('@')[0],
+        email,
+        password: randomPassword,
+        role: 'user',
+        phone: '',
+      });
+    }
+
+    sendTokenResponse(user, 200, res);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // @route   GET /api/auth/me
 // @desc    Get current logged in user
 // @access  Private
