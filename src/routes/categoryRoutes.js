@@ -5,14 +5,6 @@ const Category = require('../models/Category');
 const DEFAULT_CATEGORIES = [
   { name: 'Player Version', slug: 'player-version', tag: 'Athletic Slim Fit', image: '/jersey/WhatsApp Image 2026-09-08 at 11.44.17 PM.jpeg', status: 'Active' },
   { name: 'Fan Version', slug: 'fan-version', tag: 'Standard Fit', image: '/jersey/WhatsApp Image 2026-09-08 at 11.44.39 PM.jpeg', status: 'Active' },
-  { name: 'Full Sets (Kit + Shorts)', slug: 'set', tag: 'Complete Uniform', image: '/jersey/WhatsApp Image 2026-09-08 at 11.44.00 PM.jpeg', status: 'Active' },
-  { name: 'Retro Classics', slug: 'retro', tag: 'Vintage Legends', image: '/jersey/WhatsApp Image 2026-09-08 at 11.44.41 PM (1).jpeg', status: 'Active' },
-  { name: 'Clearance Sale', slug: 'clearance', tag: 'Up to 50% Off', image: '/jersey/WhatsApp Image 2026-09-08 at 11.44.40 PM.jpeg', status: 'Active' },
-  { name: 'Formula 1 Racing', slug: 'formula-1', tag: 'F1 Teamwear', image: '/jersey/WhatsApp Image 2026-09-08 at 11.44.43 PM.jpeg', status: 'Active' },
-  { name: 'Cricket Kits', slug: 'cricket', tag: 'National & IPL', image: '/jersey/WhatsApp Image 2026-09-08 at 11.44.44 PM.jpeg', status: 'Active' },
-  { name: 'NBA Basketball', slug: 'nba', tag: 'Swingman Jerseys', image: '/jersey/WhatsApp Image 2026-09-08 at 11.44.42 PM.jpeg', status: 'Active' },
-  { name: 'Windbreakers & Jackets', slug: 'jackets', tag: 'Outerwear', image: '/jersey/WhatsApp Image 2026-09-08 at 11.44.43 PM.jpeg', status: 'Active' },
-  { name: 'Team Polos', slug: 'polo', tag: 'Casual Sport', image: '/jersey/WhatsApp Image 2026-09-08 at 11.44.45 PM (1).jpeg', status: 'Active' },
 ];
 
 async function seedCategoriesIfEmpty() {

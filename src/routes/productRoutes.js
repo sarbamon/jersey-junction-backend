@@ -174,11 +174,24 @@ router.post('/', protect, authorize('admin'), async (req, res, next) => {
         .replace(/(^-|-$)+/g, '') + '-' + Date.now();
     }
 
+    if (productData.category) {
+      const catLower = productData.category.toLowerCase().trim();
+      if (catLower.includes('fan')) {
+        productData.category = 'Fan Version';
+        productData.sport = 'fan version';
+      } else if (catLower.includes('player')) {
+        productData.category = 'Player Version';
+        productData.sport = 'player version';
+      } else {
+        productData.sport = catLower;
+      }
+    }
+
     if (productData.sizes && !productData.availableSizes) {
       productData.availableSizes = productData.sizes;
     }
 
-    if (productData.sizeStock && typeof productData.sizeStock === 'object') {
+    if (productData.sizeStock && typeof productData.sizeStock === 'object' && Object.keys(productData.sizeStock).length > 0) {
       const stockSum = Object.values(productData.sizeStock).reduce((sum, val) => sum + (Number(val) || 0), 0);
       productData.stock = stockSum;
       const inStockSizes = Object.entries(productData.sizeStock)
@@ -188,7 +201,18 @@ router.post('/', protect, authorize('admin'), async (req, res, next) => {
         productData.availableSizes = inStockSizes;
         productData.sizes = inStockSizes;
       }
+    } else if (Number(productData.stock) > 0) {
+      // If total stock was provided without size breakdown, default standard sizes
+      const baseSizes = productData.sizes && productData.sizes.length ? productData.sizes : ['S', 'M', 'L', 'XL'];
+      const perSize = Math.max(1, Math.round(Number(productData.stock) / baseSizes.length));
+      const autoSizeStock = {};
+      baseSizes.forEach(s => { autoSizeStock[s] = perSize; });
+      productData.sizeStock = autoSizeStock;
+      productData.stock = Number(productData.stock);
+      productData.availableSizes = baseSizes;
+      productData.sizes = baseSizes;
     }
+
     if (productData.isCustomizable !== undefined) {
       productData.isCustomizable = Boolean(productData.isCustomizable);
     }
@@ -212,11 +236,24 @@ const updateProductHandler = async (req, res, next) => {
     const query = isObjectId ? { _id: req.params.id } : { slug: req.params.id };
 
     const updateData = { ...req.body };
+    if (updateData.category) {
+      const catLower = updateData.category.toLowerCase().trim();
+      if (catLower.includes('fan')) {
+        updateData.category = 'Fan Version';
+        updateData.sport = 'fan version';
+      } else if (catLower.includes('player')) {
+        updateData.category = 'Player Version';
+        updateData.sport = 'player version';
+      } else {
+        updateData.sport = catLower;
+      }
+    }
+
     if (updateData.sizes && !updateData.availableSizes) {
       updateData.availableSizes = updateData.sizes;
     }
 
-    if (updateData.sizeStock && typeof updateData.sizeStock === 'object') {
+    if (updateData.sizeStock && typeof updateData.sizeStock === 'object' && Object.keys(updateData.sizeStock).length > 0) {
       const stockSum = Object.values(updateData.sizeStock).reduce((sum, val) => sum + (Number(val) || 0), 0);
       updateData.stock = stockSum;
       const inStockSizes = Object.entries(updateData.sizeStock)
@@ -226,6 +263,13 @@ const updateProductHandler = async (req, res, next) => {
         updateData.availableSizes = inStockSizes;
         updateData.sizes = inStockSizes;
       }
+    } else if (updateData.stock !== undefined && Number(updateData.stock) > 0 && (!updateData.sizeStock || Object.keys(updateData.sizeStock).length === 0)) {
+      const baseSizes = updateData.sizes && updateData.sizes.length ? updateData.sizes : ['S', 'M', 'L', 'XL'];
+      const perSize = Math.max(1, Math.round(Number(updateData.stock) / baseSizes.length));
+      const autoSizeStock = {};
+      baseSizes.forEach(s => { autoSizeStock[s] = perSize; });
+      updateData.sizeStock = autoSizeStock;
+      updateData.stock = Number(updateData.stock);
     }
 
     if (updateData.isCustomizable !== undefined) {
