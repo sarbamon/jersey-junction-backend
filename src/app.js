@@ -73,6 +73,7 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/upload', uploadRoutes);
 
 // Error handler middleware
 app.use(errorHandler);

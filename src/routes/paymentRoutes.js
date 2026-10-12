@@ -3,6 +3,7 @@ const router = express.Router();
 const crypto = require('crypto');
 const Razorpay = require('razorpay');
 const Order = require('../models/Order');
+const User = require('../models/User');
 const { adjustProductStock } = require('../utils/inventory');
 
 const getRazorpayInstance = () => {
@@ -38,6 +39,16 @@ router.post('/create-order', async (req, res) => {
     const amount = Number(req.body.amount);
     const currency = req.body.currency || 'INR';
     const orderData = req.body.orderData; // optional complete order payload from checkout
+
+    if (orderData && orderData.email) {
+      const registeredUser = await User.findOne({ email: orderData.email.trim().toLowerCase() });
+      if (!registeredUser) {
+        return res.status(401).json({
+          success: false,
+          message: 'Account required. Please sign in or register to place an order.',
+        });
+      }
+    }
 
     if (!Number.isFinite(amount) || amount < 1) {
       return res.status(400).json({

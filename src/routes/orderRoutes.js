@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Order = require('../models/Order');
 const Product = require('../models/Product');
+const User = require('../models/User');
 
 // Helper to format backend Mongo order to frontend object
 const formatOrder = (order) => ({
@@ -103,6 +104,23 @@ router.post('/', async (req, res, next) => {
     } = req.body;
 
     const orderId = id || `#JJ${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const normalizedEmail = (email || '').trim().toLowerCase();
+    if (!normalizedEmail) {
+      return res.status(400).json({
+        success: false,
+        message: 'A valid customer email is required to place an order.',
+      });
+    }
+
+    // Enforce that customers must have an account to buy
+    const registeredUser = await User.findOne({ email: normalizedEmail });
+    if (!registeredUser) {
+      return res.status(401).json({
+        success: false,
+        message: 'Account required. Please sign in or register an account to place an order.',
+      });
+    }
 
     // Check if pending order already exists (from pre-creation at checkout)
     const existingOrder = await Order.findOne({
