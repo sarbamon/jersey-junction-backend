@@ -72,9 +72,21 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 // Cookie parser
 app.use(cookieParser());
 
-// Health check endpoint
+const mongoose = require('mongoose');
+
+// Health check endpoint with database diagnostics
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'OK', message: 'Jersey Junction API is running' });
+  const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+  const dbState = states[mongoose.connection.readyState] || 'unknown';
+  res.status(200).json({
+    status: 'OK',
+    message: 'Jersey Junction API is running',
+    database: {
+      status: dbState,
+      hasUri: Boolean(process.env.MONGODB_URI),
+      dbName: mongoose.connection.db ? mongoose.connection.db.databaseName : null,
+    },
+  });
 });
 
 // Mount routers

@@ -9,7 +9,7 @@ const connectDB = async () => {
 
   isConnecting = true;
   try {
-    const rawUri = process.env.MONGODB_URI || '';
+    const rawUri = (process.env.MONGODB_URI || '').trim().replace(/^["']|["']$/g, '');
     if (!rawUri) {
       console.warn('MONGODB_URI is not set in environment.');
       isConnecting = false;
