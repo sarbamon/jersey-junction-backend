@@ -97,6 +97,38 @@ const orderSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    icarryShipmentId: {
+      type: String,
+      default: '',
+    },
+    trackingNumber: {
+      type: String,
+      default: '',
+    },
+    courierName: {
+      type: String,
+      default: '',
+    },
+    labelUrl: {
+      type: String,
+      default: '',
+    },
+    shippingStatus: {
+      type: String,
+      default: '',
+    },
+    bookedAt: {
+      type: String,
+      default: '',
+    },
+    packageWeight: {
+      type: Number,
+      default: 0.4,
+    },
+    packageDimensions: {
+      type: String,
+      default: '25x20x3',
+    },
     timeline: [timelineSchema],
   },
   {

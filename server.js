@@ -15,8 +15,11 @@ const server = app.listen(PORT, () => {
   console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
 });
 
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (err, promise) => {
-  console.error(`Unhandled Rejection Error: ${err.message}`);
-  server.close(() => process.exit(1));
+// Handle unhandled promise rejections without crashing
+process.on('unhandledRejection', (err) => {
+  console.warn(`[Network/System Notice] ${err.message}. Server remains alive to retry.`);
+});
+
+process.on('uncaughtException', (err) => {
+  console.warn(`[Uncaught Exception] ${err.message}.`);
 });

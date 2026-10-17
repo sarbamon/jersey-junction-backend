@@ -7,23 +7,43 @@ const DEFAULT_CATEGORIES = [
   { name: 'Fan Version', slug: 'fan-version', tag: 'Standard Fit', image: '/jersey/WhatsApp Image 2026-09-08 at 11.44.39 PM.jpeg', status: 'Active' },
 ];
 
+let hasSeeded = false;
 async function seedCategoriesIfEmpty() {
+  if (hasSeeded) return;
   try {
     const count = await Category.countDocuments();
     if (count === 0) {
       await Category.insertMany(DEFAULT_CATEGORIES);
       console.log('Seeded default admin categories in MongoDB.');
     }
+    hasSeeded = true;
   } catch (err) {
     console.error('Error seeding categories:', err.message);
   }
 }
 
+// In-memory cache for ultra-fast 0ms responses
+let cachedActiveCategories = null;
+let cachedActiveTime = 0;
+let cachedAdminCategories = null;
+let cachedAdminTime = 0;
+const CACHE_TTL = 60 * 1000; // 60 seconds
+
+function invalidateCategoryCache() {
+  cachedActiveCategories = null;
+  cachedAdminCategories = null;
+}
+
 // GET active categories for public storefront
 router.get('/', async (req, res) => {
   try {
+    if (cachedActiveCategories && (Date.now() - cachedActiveTime < CACHE_TTL)) {
+      return res.json({ success: true, count: cachedActiveCategories.length, data: cachedActiveCategories });
+    }
     await seedCategoriesIfEmpty();
-    const categories = await Category.find({ status: 'Active' }).sort({ order: 1, createdAt: 1 });
+    const categories = await Category.find({ status: 'Active' }).sort({ order: 1, createdAt: 1 }).lean();
+    cachedActiveCategories = categories;
+    cachedActiveTime = Date.now();
     res.json({ success: true, count: categories.length, data: categories });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -33,8 +53,13 @@ router.get('/', async (req, res) => {
 // GET all categories for admin
 router.get('/admin/all', async (req, res) => {
   try {
+    if (cachedAdminCategories && (Date.now() - cachedAdminTime < CACHE_TTL)) {
+      return res.json({ success: true, count: cachedAdminCategories.length, data: cachedAdminCategories });
+    }
     await seedCategoriesIfEmpty();
-    const categories = await Category.find().sort({ order: 1, createdAt: 1 });
+    const categories = await Category.find().sort({ order: 1, createdAt: 1 }).lean();
+    cachedAdminCategories = categories;
+    cachedAdminTime = Date.now();
     res.json({ success: true, count: categories.length, data: categories });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -44,6 +69,7 @@ router.get('/admin/all', async (req, res) => {
 // PUT /api/categories/reorder - Update order of categories
 router.put('/reorder', async (req, res) => {
   try {
+    invalidateCategoryCache();
     const { orderedIds } = req.body;
     if (Array.isArray(orderedIds)) {
       const updates = orderedIds.map((id, index) => {
@@ -55,7 +81,9 @@ router.put('/reorder', async (req, res) => {
       });
       await Promise.all(updates);
     }
-    const categories = await Category.find().sort({ order: 1, createdAt: 1 });
+    const categories = await Category.find().sort({ order: 1, createdAt: 1 }).lean();
+    cachedAdminCategories = categories;
+    cachedAdminTime = Date.now();
     res.json({ success: true, count: categories.length, data: categories });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -65,6 +93,7 @@ router.put('/reorder', async (req, res) => {
 // POST create category
 router.post('/', async (req, res) => {
   try {
+    invalidateCategoryCache();
     const { name, slug, tag, image, status } = req.body;
     const catSlug = slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const existing = await Category.findOne({ slug: catSlug });
@@ -91,6 +120,7 @@ router.post('/', async (req, res) => {
 // PUT update category
 router.put('/:id', async (req, res) => {
   try {
+    invalidateCategoryCache();
     let category = await Category.findById(req.params.id);
     if (!category) {
       // search by slug or custom id if needed
@@ -109,6 +139,7 @@ router.put('/:id', async (req, res) => {
 // DELETE category
 router.delete('/:id', async (req, res) => {
   try {
+    invalidateCategoryCache();
     let category = await Category.findById(req.params.id);
     if (!category) {
       category = await Category.findOne({ slug: req.params.id });

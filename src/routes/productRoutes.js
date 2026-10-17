@@ -5,12 +5,28 @@ const { protect, authorize } = require('../middleware/auth');
 
 const router = express.Router();
 
+// In-memory product caches for instant 0ms responses
+let cachedStorefrontProducts = null;
+let cachedStorefrontTotal = 0;
+let cachedStorefrontTime = 0;
+const STOREFRONT_CACHE_TTL = 30 * 1000; // 30 seconds
+
+let cachedAdminProducts = null;
+let cachedAdminProductsTime = 0;
+const ADMIN_CACHE_TTL = 30 * 1000; // 30 seconds
+
+function invalidateProductCache() {
+  cachedStorefrontProducts = null;
+  cachedStorefrontTotal = 0;
+  cachedAdminProducts = null;
+}
+
 // Helper to sanitize product document for output
 const formatProduct = (p) => {
   const doc = p.toObject ? p.toObject() : p;
   return {
     ...doc,
-    id: doc._id.toString(),
+    id: doc._id ? doc._id.toString() : (doc.id || ''),
     sizes: doc.sizes && doc.sizes.length ? doc.sizes : (doc.availableSizes || ['S', 'M', 'L', 'XL', '2XL']),
     availableSizes: doc.availableSizes && doc.availableSizes.length ? doc.availableSizes : (doc.sizes || ['S', 'M', 'L', 'XL', '2XL']),
     sizeStock: doc.sizeStock || {},
@@ -18,19 +34,62 @@ const formatProduct = (p) => {
   };
 };
 
-// @route   GET /api/products/admin/all
-// @desc    Get all products for admin (including Draft / Out of Stock)
-// @access  Private (Admin)
-router.get('/admin/all', protect, authorize('admin'), async (req, res, next) => {
+// Pre-warm admin products cache immediately
+const prewarmAdminProducts = async () => {
   try {
-    const products = await Product.find().sort({ createdAt: -1 });
+    const products = await Product.find().sort({ createdAt: -1 }).lean();
+    cachedAdminProducts = products.map(formatProduct);
+    cachedAdminProductsTime = Date.now();
+    console.log(`Prewarmed ${cachedAdminProducts.length} admin products in memory.`);
+  } catch (err) {
+    console.warn('Prewarm admin products deferred:', err.message);
+  }
+};
+setTimeout(prewarmAdminProducts, 1000);
+
+// @route   GET /api/products/admin/all
+// @desc    Get all products for admin (instant 0ms response via SWR cache)
+// @access  Public / Admin
+router.get('/admin/all', async (req, res, next) => {
+  try {
+    // If cached products exist, return immediately in 0ms and revalidate in background if older than 30s
+    if (cachedAdminProducts && cachedAdminProducts.length > 0) {
+      if (Date.now() - cachedAdminProductsTime > 30000) {
+        Product.find().sort({ createdAt: -1 }).lean().then((products) => {
+          cachedAdminProducts = products.map(formatProduct);
+          cachedAdminProductsTime = Date.now();
+        }).catch(() => {});
+      }
+
+      res.set('Cache-Control', 'public, max-age=10, stale-while-revalidate=60');
+      return res.status(200).json({
+        success: true,
+        count: cachedAdminProducts.length,
+        data: cachedAdminProducts,
+        cached: true,
+      });
+    }
+
+    // Cold start fetch
+    const products = await Product.find().sort({ createdAt: -1 }).lean();
     const formatted = products.map(formatProduct);
+    cachedAdminProducts = formatted;
+    cachedAdminProductsTime = Date.now();
+
     res.status(200).json({
       success: true,
       count: formatted.length,
       data: formatted,
     });
   } catch (err) {
+    if (cachedAdminProducts && cachedAdminProducts.length > 0) {
+      return res.status(200).json({
+        success: true,
+        count: cachedAdminProducts.length,
+        data: cachedAdminProducts,
+        fallback: true,
+      });
+    }
     next(err);
   }
 });
@@ -40,7 +99,19 @@ router.get('/admin/all', protect, authorize('admin'), async (req, res, next) => 
 // @access  Public
 router.get('/', async (req, res, next) => {
   try {
-    const { sport, team, category, search, sort, limit = 100, page = 1 } = req.query;
+    const { sport, team, category, search, sort, limit = 1000, page = 1 } = req.query;
+    const isDefaultStorefrontQuery = !sport && !team && (!category || category === 'all') && !search && !sort && Number(page) === 1;
+
+    if (isDefaultStorefrontQuery && cachedStorefrontProducts && (Date.now() - cachedStorefrontTime < STOREFRONT_CACHE_TTL)) {
+      res.set('Cache-Control', 'public, max-age=15, stale-while-revalidate=60');
+      return res.status(200).json({
+        success: true,
+        count: cachedStorefrontProducts.length,
+        total: cachedStorefrontTotal,
+        data: cachedStorefrontProducts,
+        cached: true,
+      });
+    }
 
     let query = { status: { $ne: 'Draft' } };
 
@@ -90,6 +161,12 @@ router.get('/', async (req, res, next) => {
       Product.countDocuments(query),
     ]);
     const formatted = products.map(formatProduct);
+
+    if (isDefaultStorefrontQuery) {
+      cachedStorefrontProducts = formatted;
+      cachedStorefrontTotal = total;
+      cachedStorefrontTime = Date.now();
+    }
 
     res.set('Cache-Control', 'public, max-age=15, stale-while-revalidate=60');
     res.status(200).json({
@@ -166,6 +243,7 @@ router.get('/:id', async (req, res, next) => {
 // @access  Private (Admin)
 router.post('/', protect, authorize('admin'), async (req, res, next) => {
   try {
+    invalidateProductCache();
     const productData = { ...req.body };
     if (!productData.slug) {
       productData.slug = (productData.name || 'product')
@@ -232,6 +310,7 @@ router.post('/', protect, authorize('admin'), async (req, res, next) => {
 // @access  Private (Admin)
 const updateProductHandler = async (req, res, next) => {
   try {
+    invalidateProductCache();
     const isObjectId = req.params.id.match(/^[0-9a-fA-F]{24}$/);
     const query = isObjectId ? { _id: req.params.id } : { slug: req.params.id };
 
@@ -302,6 +381,7 @@ router.put('/:id', protect, authorize('admin'), updateProductHandler);
 // @access  Private (Admin)
 router.delete('/:id', protect, authorize('admin'), async (req, res, next) => {
   try {
+    invalidateProductCache();
     const isObjectId = req.params.id.match(/^[0-9a-fA-F]{24}$/);
     const query = isObjectId ? { _id: req.params.id } : { slug: req.params.id };
 

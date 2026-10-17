@@ -21,6 +21,14 @@ const formatOrder = (order) => ({
   orderStatus: order.orderStatus,
   date: order.date,
   timeline: order.timeline || [],
+  icarryShipmentId: order.icarryShipmentId || '',
+  trackingNumber: order.trackingNumber || '',
+  courierName: order.courierName || '',
+  labelUrl: order.labelUrl || '',
+  shippingStatus: order.shippingStatus || '',
+  bookedAt: order.bookedAt || '',
+  packageWeight: order.packageWeight || 0.4,
+  packageDimensions: order.packageDimensions || '25x20x3',
 });
 
 // GET /api/orders - Get all orders (for Admin Orders page)

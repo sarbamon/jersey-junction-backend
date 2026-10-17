@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
+const path = require('path');
 const errorHandler = require('./middleware/errorHandler');
 
 // Route files
@@ -12,11 +13,21 @@ const orderRoutes = require('./routes/orderRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
+const bannerRoutes = require('./routes/bannerRoutes');
+const icarryRoutes = require('./routes/icarryRoutes');
 
 const app = express();
 
 // Security headers
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: false,
+  })
+);
+
+// Serve local static uploaded files
+app.use('/uploads', express.static(path.join(__dirname, '../public/uploads')));
+app.use('/upload/disk', express.static(path.join(__dirname, '../public/uploads')));
 
 // Enable CORS
 const allowedOrigins = [
@@ -40,10 +51,10 @@ app.use(
   })
 );
 
-// Rate limiting
+// Rate limiting (generous for active store browsing and multiple concurrent users)
 const limiter = rateLimit({
   windowMs: 10 * 60 * 1000, // 10 minutes
-  max: 200,
+  max: 2000,
 });
 app.use('/api', limiter);
 
@@ -71,9 +82,11 @@ app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/categories', categoryRoutes);
+app.use('/api/banners', bannerRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/upload', uploadRoutes);
+app.use('/api/icarry', icarryRoutes);
 
 // Error handler middleware
 app.use(errorHandler);
