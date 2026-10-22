@@ -16,29 +16,33 @@ const adjustProductStock = async (items, direction = -1) => {
       const absQty = Math.abs(qty);
       const price = Number(itm.unitPrice) || 0;
 
-      const prodQueries = [];
+      let matchedProd = null;
+
       if (itm.productId) {
         const rawId = String(itm.productId).trim();
+        const specificQueries = [];
         if (rawId.match(/^[0-9a-fA-F]{24}$/)) {
-          prodQueries.push({ _id: rawId });
+          specificQueries.push({ _id: rawId });
         }
-        prodQueries.push({ slug: rawId.toLowerCase() });
-        prodQueries.push({ slug: rawId });
-        prodQueries.push({ sku: rawId });
+        specificQueries.push({ slug: rawId.toLowerCase() });
+        specificQueries.push({ slug: rawId });
+        specificQueries.push({ sku: rawId });
+
+        matchedProd = await Product.findOne({ $or: specificQueries });
       }
-      if (itm.name) {
+
+      if (!matchedProd && itm.name) {
         const cleanName = String(itm.name).trim();
-        prodQueries.push({ name: cleanName });
-        try {
-          prodQueries.push({ name: new RegExp(`^${escapeRegex(cleanName)}$`, 'i') });
-        } catch (e) {}
+        matchedProd = await Product.findOne({
+          $or: [
+            { name: cleanName },
+            { name: new RegExp(`^${escapeRegex(cleanName)}$`, 'i') }
+          ]
+        });
       }
 
-      if (prodQueries.length === 0) continue;
-
-      const matchedProd = await Product.findOne({ $or: prodQueries });
       if (!matchedProd) {
-        console.warn(`[Inventory] Could not find product matching:`, prodQueries);
+        console.warn(`[Inventory] Could not find product matching productId: "${itm.productId}" or name: "${itm.name}"`);
         continue;
       }
 
@@ -96,6 +100,14 @@ const adjustProductStock = async (items, direction = -1) => {
       console.error(`[Inventory Error] Failed adjusting stock for item:`, itm, err);
     }
   }
+
+  // Invalidate product caches so storefront and admin products return updated stock immediately
+  try {
+    const { invalidateProductCache } = require('../routes/productRoutes');
+    if (typeof invalidateProductCache === 'function') {
+      invalidateProductCache();
+    }
+  } catch (cacheErr) {}
 };
 
 module.exports = {

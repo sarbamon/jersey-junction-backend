@@ -27,6 +27,22 @@ const seedData = async () => {
       });
       console.log('Seed: Secondary Admin user created (admin@jerseyjunction.com)');
     }
+
+    // Seed admin from .env if defined
+    const envAdminEmail = (process.env.ADMIN_EMAIL || '').toLowerCase().trim();
+    const envAdminPassword = process.env.ADMIN_PASSWORD || 'admin123';
+    if (envAdminEmail && envAdminEmail !== adminEmail && envAdminEmail !== secondaryAdminEmail) {
+      let envAdmin = await User.findOne({ email: envAdminEmail });
+      if (!envAdmin) {
+        await User.create({
+          name: 'Portal Administrator',
+          email: envAdminEmail,
+          password: envAdminPassword,
+          role: 'admin',
+        });
+        console.log(`Seed: Admin from env created (${envAdminEmail})`);
+      }
+    }
   } catch (error) {
     console.error('Seeding error:', error.message);
   }

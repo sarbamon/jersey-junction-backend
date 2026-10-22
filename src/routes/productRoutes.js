@@ -19,6 +19,7 @@ function invalidateProductCache() {
   cachedStorefrontProducts = null;
   cachedStorefrontTotal = 0;
   cachedAdminProducts = null;
+  setTimeout(prewarmProducts, 100);
 }
 
 // Helper to sanitize product document for output
@@ -34,18 +35,26 @@ const formatProduct = (p) => {
   };
 };
 
-// Pre-warm admin products cache immediately
-const prewarmAdminProducts = async () => {
+// Pre-warm storefront and admin products cache immediately
+const prewarmProducts = async () => {
   try {
-    const products = await Product.find().sort({ createdAt: -1 }).lean();
-    cachedAdminProducts = products.map(formatProduct);
+    const [adminProds, storefrontProds, total] = await Promise.all([
+      Product.find().sort({ createdAt: -1 }).lean(),
+      Product.find({ status: { $ne: 'Draft' } }).sort({ createdAt: -1 }).limit(1000).lean(),
+      Product.countDocuments({ status: { $ne: 'Draft' } }),
+    ]);
+    cachedAdminProducts = adminProds.map(formatProduct);
     cachedAdminProductsTime = Date.now();
-    console.log(`Prewarmed ${cachedAdminProducts.length} admin products in memory.`);
+
+    cachedStorefrontProducts = storefrontProds.map(formatProduct);
+    cachedStorefrontTotal = total;
+    cachedStorefrontTime = Date.now();
+    console.log(`Prewarmed ${cachedStorefrontProducts.length} storefront & ${cachedAdminProducts.length} admin products in memory.`);
   } catch (err) {
-    console.warn('Prewarm admin products deferred:', err.message);
+    console.warn('Prewarm products deferred:', err.message);
   }
 };
-setTimeout(prewarmAdminProducts, 1000);
+setTimeout(prewarmProducts, 500);
 
 // @route   GET /api/products/admin/all
 // @desc    Get all products for admin (instant 0ms response via SWR cache)
@@ -102,7 +111,23 @@ router.get('/', async (req, res, next) => {
     const { sport, team, category, search, sort, limit = 1000, page = 1 } = req.query;
     const isDefaultStorefrontQuery = !sport && !team && (!category || category === 'all') && !search && !sort && Number(page) === 1;
 
-    if (isDefaultStorefrontQuery && cachedStorefrontProducts && (Date.now() - cachedStorefrontTime < STOREFRONT_CACHE_TTL)) {
+    // SWR Cache Strategy: If default storefront query and cache exists, return INSTANTLY in 0ms!
+    if (isDefaultStorefrontQuery && cachedStorefrontProducts && cachedStorefrontProducts.length > 0) {
+      // Revalidate in background if older than 30s
+      if (Date.now() - cachedStorefrontTime > STOREFRONT_CACHE_TTL) {
+        Product.find({ status: { $ne: 'Draft' } })
+          .sort({ createdAt: -1 })
+          .limit(1000)
+          .lean()
+          .then(async (products) => {
+            const total = await Product.countDocuments({ status: { $ne: 'Draft' } });
+            cachedStorefrontProducts = products.map(formatProduct);
+            cachedStorefrontTotal = total;
+            cachedStorefrontTime = Date.now();
+          })
+          .catch(() => {});
+      }
+
       res.set('Cache-Control', 'public, max-age=15, stale-while-revalidate=60');
       return res.status(200).json({
         success: true,
@@ -400,4 +425,6 @@ router.delete('/:id', protect, authorize('admin'), async (req, res, next) => {
   }
 });
 
+router.invalidateProductCache = invalidateProductCache;
 module.exports = router;
+module.exports.invalidateProductCache = invalidateProductCache;

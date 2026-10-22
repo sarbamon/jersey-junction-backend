@@ -11,9 +11,9 @@ if (!fs.existsSync(uploadsDir)) {
 
 // Helper to check and configure Cloudinary
 const isCloudinaryConfigured = () => {
-  const cloud_name = process.env.CLOUDINARY_CLOUD_NAME;
-  const api_key = process.env.CLOUDINARY_API_KEY;
-  const api_secret = process.env.CLOUDINARY_API_SECRET;
+  const cloud_name = process.env.CLOUDINARY_CLOUD_NAME ? process.env.CLOUDINARY_CLOUD_NAME.trim() : '';
+  const api_key = process.env.CLOUDINARY_API_KEY ? process.env.CLOUDINARY_API_KEY.trim() : '';
+  const api_secret = process.env.CLOUDINARY_API_SECRET ? process.env.CLOUDINARY_API_SECRET.trim() : '';
 
   if (
     cloud_name &&
@@ -35,7 +35,7 @@ const isCloudinaryConfigured = () => {
 // POST /api/upload - Upload product image to Cloudinary or local disk
 router.post('/', async (req, res, next) => {
   try {
-    const { image } = req.body;
+    const { image, folder } = req.body;
 
     if (!image) {
       return res.status(400).json({ success: false, message: 'Image data or URL is required' });
@@ -43,7 +43,7 @@ router.post('/', async (req, res, next) => {
 
     if (isCloudinaryConfigured()) {
       const uploadResponse = await cloudinary.uploader.upload(image, {
-        folder: 'jersey-junction/products',
+        folder: folder || 'jerseyjunction_uploads',
         resource_type: 'auto',
       });
 

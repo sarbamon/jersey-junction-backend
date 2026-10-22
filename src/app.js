@@ -15,6 +15,7 @@ const paymentRoutes = require('./routes/paymentRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const bannerRoutes = require('./routes/bannerRoutes');
 const icarryRoutes = require('./routes/icarryRoutes');
+const settingsRoutes = require('./routes/settingsRoutes');
 
 const app = express();
 
@@ -99,6 +100,7 @@ app.use('/api/payment', paymentRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/upload', uploadRoutes);
 app.use('/api/icarry', icarryRoutes);
+app.use('/api/settings', settingsRoutes);
 
 // Error handler middleware
 app.use(errorHandler);

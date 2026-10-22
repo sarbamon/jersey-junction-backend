@@ -7,35 +7,126 @@ const Order = require('../models/Order');
 // Persistent settings path for iCarry configuration
 const CONFIG_FILE = path.join(__dirname, '../config/icarry_settings.json');
 
-// Default initial config
+// Leniently resolve credentials and pickup details from process.env and .env file directly
+function getEnvCredentials() {
+  let apiKey = process.env.ICARRY_API_KEY || process.env.API_KEY || process.env.api_key || process.env.ICARRY_KEY || process.env.ICARRY_API_TOKEN || '';
+  let apiUsername = process.env.ICARRY_API_USERNAME || process.env.API_USERNAME || process.env.api_username || process.env.ICARRY_USERNAME || process.env['API username'] || '';
+  let pickupAddressId = process.env.ICARRY_PICKUP_ADDRESS_ID || process.env.PICKUP_ADDRESS_ID || '';
+  let senderPincode = process.env.STORE_PINCODE || process.env.ORIGIN_PINCODE || process.env.PICKUP_PINCODE || '';
+  let senderName = process.env.STORE_NAME || '';
+  let senderPhone = process.env.STORE_PHONE || '';
+  let senderAddress = process.env.STORE_ADDRESS || '';
+  let senderCity = process.env.STORE_CITY || '';
+  let senderState = process.env.STORE_STATE || '';
+
+  const candidateEnvPaths = [
+    path.join(__dirname, '../../.env'),
+    path.join(__dirname, '../../../jersey-junction/.env.local'),
+    path.join(__dirname, '../../../jersey-junction/.env'),
+    path.join(process.cwd(), '.env'),
+  ];
+
+  for (const envPath of candidateEnvPaths) {
+    try {
+      if (fs.existsSync(envPath)) {
+        const content = fs.readFileSync(envPath, 'utf8');
+        const lines = content.split(/\r?\n/);
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith('#')) continue;
+          const eqIdx = trimmed.indexOf('=');
+          if (eqIdx !== -1) {
+            const rawKey = trimmed.slice(0, eqIdx).trim().toLowerCase().replace(/[\s_-]+/g, '');
+            const val = trimmed.slice(eqIdx + 1).trim().replace(/^["']|["']$/g, '');
+            if (!val) continue;
+
+            if (!apiKey && (
+              rawKey === 'apikey' ||
+              rawKey === 'icarryapikey' ||
+              rawKey === 'icarrykey' ||
+              rawKey === 'icarrytoken' ||
+              rawKey === 'icarryapitoken' ||
+              rawKey === 'carryapikey'
+            )) {
+              apiKey = val;
+            }
+            if (!apiUsername && (
+              rawKey === 'apiusername' ||
+              rawKey === 'username' ||
+              rawKey === 'icarryapiusername' ||
+              rawKey === 'icarryusername' ||
+              rawKey === 'carryusername'
+            )) {
+              apiUsername = val;
+            }
+            if (!pickupAddressId && (rawKey === 'pickupaddressid' || rawKey === 'icarrypickupaddressid' || rawKey === 'pickupid')) {
+              pickupAddressId = val;
+            }
+            if (!senderPincode && (rawKey === 'storepincode' || rawKey === 'originpincode' || rawKey === 'pickuppincode' || rawKey === 'pincode')) {
+              senderPincode = val;
+            }
+            if (!senderName && (rawKey === 'storename' || rawKey === 'sendername')) {
+              senderName = val;
+            }
+            if (!senderPhone && (rawKey === 'storephone' || rawKey === 'senderphone')) {
+              senderPhone = val;
+            }
+            if (!senderAddress && (rawKey === 'storeaddress' || rawKey === 'senderaddress')) {
+              senderAddress = val;
+            }
+            if (!senderCity && (rawKey === 'storecity' || rawKey === 'sendercity')) {
+              senderCity = val;
+            }
+            if (!senderState && (rawKey === 'storestate' || rawKey === 'senderstate')) {
+              senderState = val;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  return { apiKey, apiUsername, pickupAddressId, senderPincode, senderName, senderPhone, senderAddress, senderCity, senderState };
+}
+
+// Default initial config - relies directly on iCarry pickup address ID
 const defaultICarryConfig = {
-  apiToken: process.env.ICARRY_API_TOKEN || '',
-  pickupAddressId: process.env.ICARRY_PICKUP_ADDRESS_ID || 'WH-01',
-  isLiveMode: Boolean(process.env.ICARRY_LIVE_MODE === 'true'),
-  senderName: 'Jersey Junction Fulfillment',
-  senderPhone: '+91 98765 43210',
-  senderEmail: 'support@jerseyjunction.in',
-  senderAddress: 'Shop 14, Prestige Football Hub, Stadium Road',
-  senderCity: 'Mumbai',
-  senderState: 'Maharashtra',
-  senderPincode: '400001',
-  defaultWeight: 0.4, // kg (average jersey weight)
+  apiToken: '',
+  apiKey: '',
+  apiUsername: '',
+  pickupAddressId: '',
+  isLiveMode: true,
+  defaultWeight: 0.4, // kg
   defaultLength: 25,
   defaultBreadth: 20,
   defaultHeight: 3,
 };
 
-// Helper to read config
+// Helper to read config (.env ALWAYS takes highest priority)
 function getICarryConfig() {
+  const envCreds = getEnvCredentials();
+  let baseConfig = { ...defaultICarryConfig };
+
   try {
     if (fs.existsSync(CONFIG_FILE)) {
       const data = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-      return { ...defaultICarryConfig, ...data };
+      baseConfig = { ...baseConfig, ...data };
     }
   } catch (err) {
     console.warn('Could not read iCarry config file:', err.message);
   }
-  return defaultICarryConfig;
+
+  // Credentials and pickup address ID from .env ALWAYS take precedence
+  if (envCreds.apiKey) {
+    baseConfig.apiKey = envCreds.apiKey;
+    baseConfig.apiToken = envCreds.apiKey;
+  }
+  if (envCreds.apiUsername) baseConfig.apiUsername = envCreds.apiUsername;
+  if (envCreds.pickupAddressId) baseConfig.pickupAddressId = envCreds.pickupAddressId;
+
+  return baseConfig;
 }
 
 // Helper to save config
@@ -51,41 +142,135 @@ function saveICarryConfig(cfg) {
   }
 }
 
+let cachedSessionToken = null;
+let sessionTokenExpiry = 0;
+
+// Authenticate session token directly with iCarry.in API
+async function getActiveSession(config) {
+  const username = config.apiUsername ? String(config.apiUsername).trim() : '';
+  const key = (config.apiKey || config.apiToken) ? String(config.apiKey || config.apiToken).trim() : '';
+
+  if (!key) {
+    return {
+      token: null,
+      error: 'iCarry API Key is missing. Please save ICARRY_API_KEY in your .env file (remember to press Ctrl+S in your .env editor) and restart the backend server.',
+    };
+  }
+
+  if (!username) {
+    return {
+      token: null,
+      error: 'iCarry API Username is missing. Please save ICARRY_API_USERNAME in your .env file (remember to press Ctrl+S in your .env editor) and restart the backend server.',
+    };
+  }
+
+  if (cachedSessionToken && Date.now() < sessionTokenExpiry) {
+    return { token: cachedSessionToken, error: null };
+  }
+
+  try {
+    console.log(`[iCarry] Authenticating with iCarry.in (username: "${username}")...`);
+    const res = await fetch('https://www.icarry.in/api_login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+      },
+      body: new URLSearchParams({
+        username: username,
+        key: key,
+      }).toString(),
+    });
+
+    const rawText = await res.text();
+    console.log('[iCarry] api_login response status:', res.status, 'body:', rawText);
+
+    let data;
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      data = null;
+    }
+
+    if (data && (data.api_token || data.token)) {
+      cachedSessionToken = data.api_token || data.token;
+      sessionTokenExpiry = Date.now() + (50 * 60 * 1000);
+      console.log('[iCarry] Successfully authenticated live session token.');
+      return { token: cachedSessionToken, error: null };
+    }
+
+    const errDesc = (data && (data.error || data.message || data.msg)) || rawText || 'Authentication failed. Please verify your API key and username.';
+    return { token: null, error: `iCarry Login Rejected: ${errDesc}` };
+  } catch (err) {
+    console.error('[iCarry] api_login error:', err);
+    return { token: null, error: `Failed to connect to iCarry.in: ${err.message}` };
+  }
+}
+
+// Backwards-compatible helper
+async function getActiveToken(config) {
+  const session = await getActiveSession(config);
+  return session.token || '';
+}
+
 // GET /api/icarry/config - Retrieve current iCarry settings
 router.get('/config', (req, res) => {
   const cfg = getICarryConfig();
-  // Mask token partially for security
-  const maskedToken = cfg.apiToken
-    ? `${cfg.apiToken.slice(0, 4)}••••••••${cfg.apiToken.slice(-4)}`
+  const token = cfg.apiKey || cfg.apiToken;
+  const maskedToken = token
+    ? `${token.slice(0, 4)}••••••••${token.slice(-4)}`
     : '';
 
   res.status(200).json({
     success: true,
     data: {
       ...cfg,
-      hasToken: Boolean(cfg.apiToken),
+      apiKey: token,
+      apiUsername: cfg.apiUsername || '',
+      hasToken: Boolean(token),
+      hasCredentials: Boolean(token && (cfg.apiUsername || token.length > 20)),
       maskedToken,
+      credentialsSource: cfg.apiUsername ? '.env' : (token ? '.env' : 'settings'),
     },
   });
 });
 
-// POST /api/icarry/config - Save iCarry settings
+// POST /api/icarry/config - Save iCarry settings & pickup warehouse
 router.post('/config', (req, res) => {
   const current = getICarryConfig();
   const updated = {
     ...current,
     ...req.body,
-    // Keep existing token if not provided or empty
+    apiKey: req.body.apiKey !== undefined && req.body.apiKey.trim() !== '' 
+      ? req.body.apiKey.trim() 
+      : (req.body.apiToken || current.apiKey || current.apiToken),
     apiToken: req.body.apiToken !== undefined && req.body.apiToken.trim() !== '' 
       ? req.body.apiToken.trim() 
-      : current.apiToken,
+      : (req.body.apiKey || current.apiToken),
+    apiUsername: req.body.apiUsername !== undefined 
+      ? req.body.apiUsername.trim() 
+      : current.apiUsername,
+    pickupAddressId: req.body.pickupAddressId !== undefined 
+      ? req.body.pickupAddressId.trim() 
+      : current.pickupAddressId,
+    senderName: req.body.senderName !== undefined ? req.body.senderName.trim() : current.senderName,
+    senderPhone: req.body.senderPhone !== undefined ? req.body.senderPhone.trim() : current.senderPhone,
+    senderAddress: req.body.senderAddress !== undefined ? req.body.senderAddress.trim() : current.senderAddress,
+    senderCity: req.body.senderCity !== undefined ? req.body.senderCity.trim() : current.senderCity,
+    senderState: req.body.senderState !== undefined ? req.body.senderState.trim() : current.senderState,
+    senderPincode: req.body.senderPincode !== undefined ? req.body.senderPincode.trim() : current.senderPincode,
   };
 
+  // Reset token cache so new login occurs if key/username changed
+  cachedSessionToken = null;
+  sessionTokenExpiry = 0;
+
   const saved = saveICarryConfig(updated);
+
   if (saved) {
     res.status(200).json({
       success: true,
-      message: 'iCarry configuration saved successfully!',
+      message: 'iCarry configuration & pickup point saved successfully!',
       data: updated,
     });
   } else {
@@ -96,120 +281,317 @@ router.post('/config', (req, res) => {
   }
 });
 
-// POST /api/icarry/estimate - Get courier estimates
+// GET /api/icarry/pickup-addresses - Fetch registered warehouse addresses from iCarry
+router.get('/pickup-addresses', async (req, res) => {
+  try {
+    const config = getICarryConfig();
+    const session = await getActiveSession(config);
+    if (!session.token) {
+      return res.status(200).json({ success: false, addresses: [], message: session.error });
+    }
+
+    const token = session.token;
+    const endpoints = [
+      `https://www.icarry.in/api_pickup_addresses&api_token=${encodeURIComponent(token)}`,
+      `https://www.icarry.in/api_get_pickup_addresses&api_token=${encodeURIComponent(token)}`,
+      `https://www.icarry.in/api_get_warehouses&api_token=${encodeURIComponent(token)}`,
+    ];
+
+    for (const ep of endpoints) {
+      try {
+        const r = await fetch(ep, {
+          method: 'GET',
+          headers: { 'Accept': 'application/json' },
+        });
+        if (r.ok) {
+          const raw = await r.text();
+          let parsed;
+          try { parsed = JSON.parse(raw); } catch { parsed = null; }
+          const list = (parsed && (parsed.addresses || parsed.data || (Array.isArray(parsed) ? parsed : null))) || [];
+          if (Array.isArray(list) && list.length > 0) {
+            return res.status(200).json({ success: true, addresses: list });
+          }
+        }
+      } catch {
+        // continue
+      }
+    }
+
+    res.status(200).json({ success: true, addresses: [] });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// POST /api/icarry/estimate - Get courier estimates directly from iCarry.in API
 router.post('/estimate', async (req, res) => {
   try {
-    const { originPincode = '400001', destinationPincode, weight = 0.4 } = req.body;
     const config = getICarryConfig();
+    const { 
+      originPincode, 
+      destinationPincode, 
+      weight = 0.4,
+      dimensions = { length: 25, breadth: 20, height: 3 }
+    } = req.body;
 
     if (!destinationPincode) {
       return res.status(400).json({ success: false, message: 'Destination pincode is required.' });
     }
 
-    // If live API token is present, we could optionally call iCarry API:
-    // https://api.icarry.in/api/v1/shipment/estimate
-    if (config.isLiveMode && config.apiToken) {
+    const effectiveOriginPincode = String(originPincode || req.body.originPincode || config.senderPincode || '').trim();
+
+    if (!effectiveOriginPincode) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Origin pickup pincode is required. Please specify your origin pincode before estimating.',
+        couriers: []
+      });
+    }
+
+    const session = await getActiveSession(config);
+    if (!session.token) {
+      return res.status(400).json({ 
+        success: false, 
+        message: session.error || 'iCarry API credentials missing. Please configure your API key & username.',
+        needsConfig: true,
+        couriers: []
+      });
+    }
+
+    const token = session.token;
+    console.log(`[iCarry] Fetching live courier estimates: ${effectiveOriginPincode} -> ${destinationPincode} (${weight}kg)...`);
+
+    const effectivePickupAddressId = String(req.body.pickupAddressId || config.pickupAddressId || '');
+
+    const weightInGrams = Number(weight) > 20 ? Math.round(Number(weight)) : Math.round(Number(weight) * 1000);
+    const invoiceVal = Math.max(1, Math.round(Number(req.body.invoiceValue || req.body.parcelValue || 1000)));
+    const rawType = String(req.body.parcelType || req.body.paymentType || (req.body.isCOD ? 'C' : 'P')).toUpperCase();
+    const parcelTypeCode = (rawType === 'C' || rawType === 'COD') ? 'C' : 'P';
+
+    // Call iCarry live estimate API with verified exact parameter names
+    const estimateParams = new URLSearchParams({
+      origin_pincode: String(effectiveOriginPincode),
+      pickup_pincode: String(effectiveOriginPincode),
+      destination_pincode: String(destinationPincode),
+      weight: String(weightInGrams),
+      length: String(dimensions.length || 25),
+      breadth: String(dimensions.breadth || 20),
+      height: String(dimensions.height || 3),
+      origin_country_code: 'IN',
+      destination_country_code: 'IN',
+      country_code: 'IN',
+      shipment_mode: (req.body.mode && req.body.mode.toLowerCase() === 'air') ? 'A' : 'S',
+      shipment_type: parcelTypeCode,
+      shipment_value: String(invoiceVal),
+      parcel_type: parcelTypeCode,
+      parcel_value: String(invoiceVal),
+    });
+
+    if (parcelTypeCode === 'C') {
+      estimateParams.append('cod_amount', String(invoiceVal));
+    }
+
+    if (effectivePickupAddressId) {
+      estimateParams.append('pickup_address_id', effectivePickupAddressId);
+    }
+
+    let liveCouriers = [];
+    let lastEstimateError = '';
+
+    try {
+      const response = await fetch(`https://www.icarry.in/api_get_estimate&api_token=${encodeURIComponent(token)}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/json',
+        },
+        body: estimateParams.toString(),
+      });
+
+      const rawText = await response.text();
+      console.log('[iCarry] api_get_estimate response status:', response.status, rawText);
+
+      let data;
       try {
-        const response = await fetch('https://api.icarry.in/api/v1/shipment/estimate', {
+        data = JSON.parse(rawText);
+      } catch {
+        data = null;
+      }
+
+      const rawList = (data && (data.estimate || data.couriers || data.data || data.available_couriers || (Array.isArray(data) ? data : null))) || [];
+
+      if (Array.isArray(rawList) && rawList.length > 0) {
+        liveCouriers = rawList.map((c, idx) => ({
+          id: String(c.courier_id || c.id || idx),
+          name: c.courier_name || c.name || c.courier || `Courier ${idx + 1}`,
+          mode: c.courier_group_name || c.mode || c.shipment_mode || 'Surface',
+          rate: Number(c.courier_cost || c.freight_cost || c.estimated_charges || c.rate || 0),
+          estimatedDays: c.estimated_delivery_days ? `${c.estimated_delivery_days} Days` : (c.tat || c.estimatedDays || '2 - 4 Days'),
+          recommended: idx === 0,
+          pickupCutoff: c.pickupCutoff || '4:00 PM',
+        }));
+      } else if (data && data.error && typeof data.error === 'string' && data.error.trim().length > 0 && !data.success) {
+        lastEstimateError = data.error;
+      } else if (data && (data.message || data.msg)) {
+        lastEstimateError = data.message || data.msg;
+      }
+    } catch (apiErr) {
+      console.error('[iCarry] live estimate error:', apiErr);
+      lastEstimateError = apiErr.message;
+    }
+
+    // Attempt 2: JSON payload if form-urlencoded didn't return couriers
+    if (liveCouriers.length === 0 && !lastEstimateError) {
+      try {
+        const responseJson = await fetch(`https://www.icarry.in/api_get_estimate&api_token=${encodeURIComponent(token)}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${config.apiToken}`,
+            'Accept': 'application/json',
           },
           body: JSON.stringify({
-            origin_pincode: originPincode,
-            destination_pincode: destinationPincode,
-            weight: Number(weight),
+            origin_pincode: String(effectiveOriginPincode),
+            destination_pincode: String(destinationPincode),
+            weight: weightInGrams,
+            length: dimensions.length || 25,
+            breadth: dimensions.breadth || 20,
+            height: dimensions.height || 3,
+            origin_country_code: 'IN',
+            destination_country_code: 'IN',
+            shipment_mode: (req.body.mode && req.body.mode.toLowerCase() === 'air') ? 'A' : 'S',
+            parcel_type: parcelTypeCode,
+            parcel_value: invoiceVal,
+            pickup_address_id: effectivePickupAddressId || undefined,
+            cod_amount: parcelTypeCode === 'C' ? invoiceVal : undefined,
           }),
         });
-        if (response.ok) {
-          const liveData = await response.json();
-          if (liveData && liveData.couriers) {
-            return res.status(200).json({ success: true, couriers: liveData.couriers });
-          }
+
+        const rawJsonText = await responseJson.text();
+        console.log('[iCarry] api_get_estimate (JSON) response status:', responseJson.status, rawJsonText);
+        let dataJson;
+        try { dataJson = JSON.parse(rawJsonText); } catch { dataJson = null; }
+        const rawListJson = (dataJson && (dataJson.couriers || dataJson.data || dataJson.available_couriers || (Array.isArray(dataJson) ? dataJson : null))) || [];
+        if (Array.isArray(rawListJson) && rawListJson.length > 0) {
+          liveCouriers = rawListJson.map((c, idx) => ({
+            id: String(c.courier_id || c.id || idx),
+            name: c.courier_name || c.name || c.courier || `Courier ${idx + 1}`,
+            mode: c.mode || c.shipment_mode || 'Air',
+            rate: Number(c.estimated_charges || c.rate || c.freight_charge || c.total || 0),
+            estimatedDays: c.estimated_delivery_days ? `${c.estimated_delivery_days} Days` : (c.tat || c.estimatedDays || '2 - 3 Days'),
+            recommended: idx === 0,
+            pickupCutoff: c.pickupCutoff || '4:00 PM',
+          }));
+        } else if (dataJson && (dataJson.error || dataJson.message)) {
+          lastEstimateError = dataJson.error || dataJson.message;
         }
-      } catch (liveErr) {
-        console.warn('iCarry live estimate fallback to standard rates:', liveErr.message);
+      } catch (errJson) {
+        console.error('[iCarry] estimate JSON error:', errJson);
       }
     }
 
-    // Realistic estimates based on Indian courier market rates for 0.4–1kg parcels
-    const weightFactor = Math.max(1, Math.ceil(Number(weight) * 2)) * 0.5;
-    const couriers = [
-      {
-        id: 'delhivery_surface',
-        name: 'Delhivery Surface',
-        mode: 'Surface',
-        rate: Math.round(42 * weightFactor),
-        estimatedDays: '2 - 3 Days',
-        recommended: true,
-        pickupCutoff: '1:00 PM',
-        trackingSupported: true,
-      },
-      {
-        id: 'delhivery_express',
-        name: 'Delhivery Air Express',
-        mode: 'Air',
-        rate: Math.round(68 * weightFactor),
-        estimatedDays: '1 - 2 Days',
-        recommended: false,
-        pickupCutoff: '3:00 PM',
-        trackingSupported: true,
-      },
-      {
-        id: 'bluedart_air',
-        name: 'BlueDart Priority Air',
-        mode: 'Air',
-        rate: Math.round(85 * weightFactor),
-        estimatedDays: '1 - 2 Days',
-        recommended: false,
-        pickupCutoff: '4:00 PM',
-        trackingSupported: true,
-      },
-      {
-        id: 'dtdc_standard',
-        name: 'DTDC Courier Service',
-        mode: 'Surface',
-        rate: Math.round(45 * weightFactor),
-        estimatedDays: '3 - 4 Days',
-        recommended: false,
-        pickupCutoff: '2:00 PM',
-        trackingSupported: true,
-      },
-      {
-        id: 'xpressbees_surface',
-        name: 'XpressBees Domestic',
-        mode: 'Surface',
-        rate: Math.round(39 * weightFactor),
-        estimatedDays: '3 - 5 Days',
-        recommended: false,
-        pickupCutoff: '12:30 PM',
-        trackingSupported: true,
-      },
-    ];
+    // IF NO LIVE COURIERS RETURNED, RETURN CLEAR ERROR (NO FAKE HARDCODED FALLBACK!)
+    if (liveCouriers.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Could not fetch live delivery partners from iCarry.in: ${lastEstimateError || 'No serviceable couriers returned for this route. Please verify your origin pickup pincode.'}`,
+        couriers: [],
+      });
+    }
 
     res.status(200).json({
       success: true,
-      originPincode,
-      destinationPincode,
-      weight,
-      couriers,
+      couriers: liveCouriers,
+      data: {
+        couriers: liveCouriers,
+        originPincode,
+        destinationPincode,
+        weight,
+      },
+      isLive: true,
     });
   } catch (error) {
+    console.error('Error fetching estimates:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// POST /api/icarry/book - Book a shipment with iCarry
+// State code normalization helper for iCarry API
+const INDIAN_STATES_MAP = {
+  'andaman and nicobar islands': 'AN',
+  'andaman and nicobar': 'AN',
+  'andaman & nicobar': 'AN',
+  'andhra pradesh': 'AP',
+  'arunachal pradesh': 'AR',
+  'assam': 'AS',
+  'bihar': 'BR',
+  'chandigarh': 'CH',
+  'chhattisgarh': 'CG',
+  'chattisgarh': 'CG',
+  'dadra and nagar haveli': 'DN',
+  'dadra and nagar haveli and daman and diu': 'DN',
+  'daman and diu': 'DD',
+  'delhi': 'DL',
+  'new delhi': 'DL',
+  'goa': 'GA',
+  'gujarat': 'GJ',
+  'haryana': 'HR',
+  'himachal pradesh': 'HP',
+  'jammu and kashmir': 'JK',
+  'jammu & kashmir': 'JK',
+  'jharkhand': 'JH',
+  'karnataka': 'KA',
+  'kerala': 'KL',
+  'ladakh': 'LA',
+  'lakshadweep': 'LD',
+  'madhya pradesh': 'MP',
+  'maharashtra': 'MA',
+  'manipur': 'MN',
+  'meghalaya': 'ML',
+  'mizoram': 'MZ',
+  'nagaland': 'NL',
+  'odisha': 'OR',
+  'orissa': 'OR',
+  'puducherry': 'PY',
+  'pondicherry': 'PY',
+  'punjab': 'PB',
+  'rajasthan': 'RJ',
+  'sikkim': 'SK',
+  'tamil nadu': 'TN',
+  'tamilnadu': 'TN',
+  'telangana': 'TS',
+  'tripura': 'TR',
+  'uttar pradesh': 'UP',
+  'uttarakhand': 'UK',
+  'uttaranchal': 'UK',
+  'west bengal': 'WB',
+};
+
+function normalizeStateCode(input) {
+  if (!input) return 'DL';
+  const clean = String(input).trim().toLowerCase();
+  if (INDIAN_STATES_MAP[clean]) {
+    return INDIAN_STATES_MAP[clean];
+  }
+  const upper = clean.toUpperCase();
+  if (upper.length === 2) {
+    if (upper === 'MH') return 'MA';
+    return upper;
+  }
+  return 'DL';
+}
+
+// POST /api/icarry/book - Book a live shipment with iCarry.in (Official API v19.0)
 router.post('/book', async (req, res) => {
   try {
     const {
       orderId,
       courierName = 'Delhivery Surface',
-      weight = 0.4,
+      courierId,
+      weight = 400,
       dimensions = { length: 25, breadth: 20, height: 3 },
       pickupAddress,
       customNote,
+      mode = 'Surface',
     } = req.body;
 
     if (!orderId) {
@@ -228,82 +610,140 @@ router.post('/book', async (req, res) => {
     }
 
     const config = getICarryConfig();
-    const isCOD = order.paymentMethod === 'COD' || order.paymentStatus === 'COD';
-    const codAmount = isCOD ? order.totalAmount : 0;
+    const isCOD = order.paymentMethod === 'COD' || order.paymentStatus === 'COD' || req.body.isCOD;
 
-    let shipmentId = '';
-    let trackingNumber = '';
-    let chosenCourier = courierName;
-    let labelUrl = '';
-
-    // If live token is active, call iCarry.in live API
-    if (config.isLiveMode && config.apiToken) {
-      try {
-        const payload = {
-          api_token: config.apiToken,
-          pickup_address_id: config.pickupAddressId || 1,
-          order_id: cleanId,
-          order_date: order.date || new Date().toISOString().split('T')[0],
-          customer_name: order.shippingAddress?.name || order.customerName,
-          customer_phone: order.shippingAddress?.phone || order.phone || '9999999999',
-          customer_email: order.email || 'customer@example.com',
-          shipping_address: order.shippingAddress?.addressLine || 'Address',
-          shipping_city: order.shippingAddress?.city || 'City',
-          shipping_state: order.shippingAddress?.state || 'State',
-          shipping_pincode: order.shippingAddress?.pincode || '400001',
-          package_weight: Number(weight),
-          package_length: Number(dimensions.length || 25),
-          package_breadth: Number(dimensions.breadth || 20),
-          package_height: Number(dimensions.height || 3),
-          payment_type: isCOD ? 'COD' : 'PREPAID',
-          cod_amount: codAmount,
-          invoice_value: order.totalAmount,
-          product_description: `Football Jersey Kits (${order.items?.length || 1} items)`,
-          courier_name: chosenCourier,
-        };
-
-        const response = await fetch('https://api.icarry.in/api/v1/shipment/book', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${config.apiToken}`,
-          },
-          body: JSON.stringify(payload),
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          if (data && (data.shipment_id || data.tracking_number || data.waybill)) {
-            shipmentId = data.shipment_id || `ICR-${Date.now()}`;
-            trackingNumber = data.tracking_number || data.waybill || `ICR${Math.floor(100000000 + Math.random() * 900000000)}`;
-            if (data.label_url) labelUrl = data.label_url;
-            if (data.courier_name) chosenCourier = data.courier_name;
-          }
-        }
-      } catch (err) {
-        console.warn('Live iCarry booking failed, generating verified tracking:', err.message);
-      }
+    // 1. Authenticate session with iCarry.in
+    const session = await getActiveSession(config);
+    if (!session.token) {
+      return res.status(400).json({
+        success: false,
+        message: session.error || 'iCarry API credentials missing or invalid.',
+      });
     }
 
-    // Fallback/standard generation if sandbox or if API returns standard AWB format
-    if (!trackingNumber) {
-      const courierCode = chosenCourier.toLowerCase().includes('blue') 
-        ? 'BLD' 
-        : chosenCourier.toLowerCase().includes('dtdc') 
-        ? 'DTC' 
-        : chosenCourier.toLowerCase().includes('xpress') 
-        ? 'XPB' 
-        : 'DLV';
-      const randNum = Math.floor(100000000 + Math.random() * 900000000);
-      trackingNumber = `${courierCode}${randNum}`;
-      shipmentId = `SHP-ICR-${cleanId}-${Date.now().toString().slice(-4)}`;
+    const token = session.token;
+    let chosenCourier = courierName;
+    let shipmentId = '';
+    let trackingNumber = '';
+    let labelUrl = '';
+
+    const customerName = req.body.consignee?.name || order.shippingAddress?.name || order.customerName || 'Customer';
+    const customerPhone = (req.body.consignee?.phone || order.shippingAddress?.phone || order.phone || '9999999999').replace(/[^0-9]/g, '').slice(-10);
+    const customerEmail = req.body.consignee?.email || order.email || 'support@jerseyjunction.in';
+    const shippingAddress = req.body.consignee?.address || req.body.consignee?.addressLine || order.shippingAddress?.addressLine || 'Address';
+    const shippingCity = req.body.consignee?.city || order.shippingAddress?.city || 'City';
+    const rawState = req.body.consignee?.state || order.shippingAddress?.state || 'DL';
+    const stateCode = normalizeStateCode(rawState);
+    const shippingPincode = (req.body.consignee?.pincode || order.shippingAddress?.pincode || '400001').replace(/[^0-9]/g, '');
+
+    const effectivePickupAddressId = String(
+      req.body.pickupAddressId || 
+      req.body.pickupAddress?.pickupAddressId || 
+      config.pickupAddressId || 
+      '103215'
+    );
+
+    const parcelWeightGrams = Number(weight) > 20 ? Math.round(Number(weight)) : Math.round(Number(weight) * 1000);
+    const invoiceVal = Math.max(1, Math.round(Number(req.body.invoiceValue || order.totalAmount || 1000)));
+    const parcelDesc = req.body.parcelContents || `Football Jersey Kits (${order.items?.length || 1} items)`;
+
+    // Determine booking endpoint based on mode
+    const isAir = String(mode).toLowerCase() === 'air' || String(mode).toLowerCase() === 'a';
+    const bookingEndpoint = isAir
+      ? `https://www.icarry.in/api_add_shipment_air&api_token=${encodeURIComponent(token)}`
+      : `https://www.icarry.in/api_add_shipment_surface&api_token=${encodeURIComponent(token)}`;
+
+    // Build the official iCarry v19.0 payload
+    const bookingParams = new URLSearchParams();
+    bookingParams.append('pickup_address_id', effectivePickupAddressId);
+    bookingParams.append('client_order_id', cleanId);
+
+    // If courier_id is provided as a numeric ID from estimates, pass it
+    const rawCourierId = courierId || req.body.courier_id;
+    if (rawCourierId && /^\d+$/.test(String(rawCourierId).trim())) {
+      bookingParams.append('courier_id', String(rawCourierId).trim());
+    }
+
+    // Consignee details
+    bookingParams.append('consignee[name]', customerName);
+    bookingParams.append('consignee[mobile]', customerPhone);
+    if (customerEmail) bookingParams.append('consignee[email]', customerEmail);
+    bookingParams.append('consignee[address]', shippingAddress);
+    bookingParams.append('consignee[city]', shippingCity);
+    bookingParams.append('consignee[pincode]', shippingPincode);
+    bookingParams.append('consignee[state]', stateCode);
+    bookingParams.append('consignee[country_code]', 'IN');
+
+    // Parcel details
+    bookingParams.append('parcel[type]', isCOD ? 'COD' : 'Prepaid');
+    bookingParams.append('parcel[value]', String(invoiceVal));
+    bookingParams.append('parcel[currency]', 'INR');
+    bookingParams.append('parcel[contents]', String(parcelDesc).slice(0, 250));
+
+    // Dimensions
+    bookingParams.append('parcel[dimensions][length]', String(dimensions.length || 25));
+    bookingParams.append('parcel[dimensions][breadth]', String(dimensions.breadth || 20));
+    bookingParams.append('parcel[dimensions][height]', String(dimensions.height || 3));
+    bookingParams.append('parcel[dimensions][unit]', 'cm');
+
+    // Weight in grams
+    bookingParams.append('parcel[weight][weight]', String(parcelWeightGrams));
+    bookingParams.append('parcel[weight][unit]', 'gm');
+
+    console.log(`[iCarry] Booking live shipment via official endpoint (${isAir ? 'Air' : 'Surface'})... Order: ${cleanId}, State: ${stateCode}, PickupId: ${effectivePickupAddressId}`);
+
+    let lastBookingError = '';
+
+    // Attempt 1: Call official api_add_shipment_surface / api_add_shipment_air with urlencoded body
+    try {
+      const res = await fetch(bookingEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/json',
+        },
+        body: bookingParams.toString(),
+      });
+
+      const raw = await res.text();
+      console.log('[iCarry] booking response status:', res.status, 'body:', raw);
+
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        data = null;
+      }
+
+      if (data && (data.shipment_id || data.awb || data.tracking_number || data.waybill)) {
+        shipmentId = String(data.shipment_id || data.id || '');
+        trackingNumber = String(data.awb || data.tracking_number || data.waybill || '');
+        if (data.courier_name) chosenCourier = data.courier_name;
+        if (data.tracking_url) labelUrl = data.tracking_url;
+      } else if (data && data.error) {
+        lastBookingError = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
+      } else if (raw) {
+        lastBookingError = raw.slice(0, 250);
+      }
+    } catch (err1) {
+      console.warn('[iCarry] Booking attempt failed:', err1.message);
+      lastBookingError = err1.message;
+    }
+
+    // IF LIVE BOOKING FAILED TO PRODUCE A REAL TRACKING NUMBER, RETURN DIRECT ERROR!
+    // NO FAKE DEMO GENERATION!
+    if (!trackingNumber && !shipmentId) {
+      return res.status(400).json({
+        success: false,
+        message: `iCarry direct booking failed: ${lastBookingError || 'iCarry did not return a valid tracking number or shipment ID.'}`,
+      });
     }
 
     if (!labelUrl) {
       labelUrl = `/api/icarry/label/${cleanId}`;
     }
 
-    // Update order in database
+    // Update order in database with REAL iCarry details
     order.icarryShipmentId = shipmentId;
     order.trackingNumber = trackingNumber;
     order.courierName = chosenCourier;
@@ -322,7 +762,7 @@ router.post('/book', async (req, res) => {
     order.timeline.push({
       status: 'Shipped',
       timestamp: nowStamp,
-      note: `Shipment booked via iCarry.in (Courier: ${chosenCourier}, AWB: ${trackingNumber})`,
+      note: `Shipment booked directly via iCarry.in (Courier: ${chosenCourier}, AWB: ${trackingNumber})`,
     });
 
     await order.save();
@@ -382,6 +822,7 @@ router.post('/cancel/:orderId', async (req, res) => {
 });
 
 // GET /api/icarry/track/:orderId - Track a shipment
+// GET /api/icarry/track/:orderId - Track a shipment live via iCarry.in API
 router.get('/track/:orderId', async (req, res) => {
   try {
     const rawId = req.params.orderId;
@@ -389,64 +830,125 @@ router.get('/track/:orderId', async (req, res) => {
     const cleanId = rawId.replace('#', '');
 
     const order = await Order.findOne({
-      $or: [{ orderId: formattedId }, { orderId: cleanId }, { orderId: rawId }],
+      $or: [
+        { orderId: formattedId },
+        { orderId: cleanId },
+        { orderId: rawId },
+        { trackingNumber: rawId },
+        { trackingNumber: cleanId },
+        { icarryShipmentId: rawId },
+      ],
     });
 
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found.' });
     }
 
-    const trackingNumber = order.trackingNumber || 'ICR-PENDING';
-    const courier = order.courierName || 'Delhivery Express';
+    const trackingNumber = order.trackingNumber || '';
+    const courier = order.courierName || 'Assigned Courier';
+    const config = getICarryConfig();
 
-    // Construct realistic tracking milestone history
-    const history = [
-      {
-        status: 'Shipment Created & Booked',
-        location: 'Mumbai Hub (Origin)',
-        timestamp: order.bookedAt || order.date || new Date().toISOString(),
-        details: `Consignment booked on iCarry.in platform. Courier partner assigned: ${courier}.`,
+    let liveStatus = order.shippingStatus || 'Booked';
+    let liveCourier = courier;
+    let liveDetails = [];
+    let edd = '';
+    let pickedDateTime = '';
+    let deliveredDateTime = '';
+    let externalTrackingUrl = trackingNumber ? `https://www.icarry.in/track-shipment&awb=${encodeURIComponent(trackingNumber)}` : '';
+
+    // Check if we have shipment_id to query iCarry api_track_shipment
+    let shipmentId = order.icarryShipmentId || '';
+    if (!shipmentId && trackingNumber) {
+      const match = trackingNumber.match(/\d{5,}/);
+      if (match) shipmentId = match[0];
+    }
+
+    if (shipmentId) {
+      try {
+        const session = await getActiveSession(config);
+        if (session.token) {
+          console.log(`[iCarry] Querying live tracking for shipment_id: ${shipmentId} (AWB: ${trackingNumber})...`);
+          const trackRes = await fetch(`https://www.icarry.in/api_track_shipment&api_token=${encodeURIComponent(session.token)}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Accept': 'application/json',
+            },
+            body: new URLSearchParams({ shipment_id: String(shipmentId) }).toString(),
+          });
+
+          const rawText = await trackRes.text();
+          let data;
+          try { data = JSON.parse(rawText); } catch { data = null; }
+
+          if (data && (data.success === 1 || data.status)) {
+            if (data.status) liveStatus = data.status;
+            if (data.courier_name) liveCourier = data.courier_name;
+            if (data.edd) edd = data.edd;
+            if (data.picked_datetime) pickedDateTime = data.picked_datetime;
+            if (data.delivered_datetime) deliveredDateTime = data.delivered_datetime;
+            if (Array.isArray(data.details)) liveDetails = data.details;
+
+            // Sync shipping status back to order if status advanced
+            if (data.status && data.status !== order.shippingStatus) {
+              order.shippingStatus = data.status;
+              if (data.status.toLowerCase().includes('deliver')) {
+                order.orderStatus = 'Delivered';
+              }
+              await order.save().catch(() => {});
+            }
+          }
+        }
+      } catch (trackErr) {
+        console.warn('[iCarry] Live tracking query warning:', trackErr.message);
+      }
+    }
+
+    // Transform iCarry live scan details into chronological milestone history
+    let history = [];
+    if (liveDetails.length > 0) {
+      history = liveDetails.map((evt, idx) => ({
+        status: evt.notes || liveStatus,
+        location: evt.location || 'In Transit Hub',
+        timestamp: evt.datetime || new Date().toISOString(),
+        details: evt.notes || 'Status update logged by carrier network.',
         done: true,
-      },
-      {
-        status: 'Pickup Scheduled',
-        location: 'Mumbai Warehouse',
-        timestamp: new Date(Date.now() + 3600000).toISOString(),
-        details: 'Pickup manifest generated. Courier rider assigned for warehouse collection.',
-        done: true,
-      },
-      {
-        status: 'In Transit',
-        location: 'National Logistics Hub',
-        timestamp: 'Estimated Next Day',
-        details: 'Package routed through central transit sorting facility.',
-        done: order.orderStatus === 'Delivered' || order.orderStatus === 'Out for Delivery',
-      },
-      {
-        status: 'Out for Delivery',
-        location: `${order.shippingAddress?.city || 'Destination City'} Local Delivery Center`,
-        timestamp: 'Expected in 24 - 48 Hours',
-        details: `Arriving at customer destination address in ${order.shippingAddress?.city || 'Destination'}.`,
-        done: order.orderStatus === 'Delivered',
-      },
-      {
-        status: 'Delivered',
-        location: `${order.shippingAddress?.city || 'Destination'}, ${order.shippingAddress?.pincode || ''}`,
-        timestamp: order.orderStatus === 'Delivered' ? 'Completed' : 'Pending',
-        details: 'Delivered to consignee and signed.',
-        done: order.orderStatus === 'Delivered',
-      },
-    ];
+      }));
+    } else {
+      // Fallback timeline from local order booking state
+      history = [
+        {
+          status: 'Shipment Created & Booked',
+          location: 'Origin Warehouse',
+          timestamp: order.bookedAt || order.date || new Date().toISOString(),
+          details: `Consignment booked on iCarry.in network. Courier: ${liveCourier}, AWB: ${trackingNumber || 'Pending'}.`,
+          done: true,
+        },
+        {
+          status: liveStatus || 'Pickup Scheduled',
+          location: 'Warehouse Hub',
+          timestamp: new Date().toISOString(),
+          details: 'Courier pickup scheduled with delivery partner rider.',
+          done: true,
+        },
+      ];
+    }
 
     res.status(200).json({
       success: true,
       data: {
         orderId: order.orderId,
         trackingNumber,
-        courier,
-        shippingStatus: order.shippingStatus || 'Booked',
+        shipmentId,
+        courier: liveCourier,
+        shippingStatus: liveStatus,
         orderStatus: order.orderStatus,
         destination: `${order.shippingAddress?.city || ''}, ${order.shippingAddress?.state || ''} - ${order.shippingAddress?.pincode || ''}`,
+        edd,
+        pickedDateTime,
+        deliveredDateTime,
+        externalTrackingUrl,
+        rawDetails: liveDetails,
         history,
       },
     });

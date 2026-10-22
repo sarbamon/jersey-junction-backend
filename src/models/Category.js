@@ -19,7 +19,7 @@ const categorySchema = new mongoose.Schema(
     },
     image: {
       type: String,
-      default: '/jersey/WhatsApp Image 2026-09-08 at 11.44.00 PM.jpeg',
+      default: 'https://res.cloudinary.com/mcsohx4p/image/upload/v1792689801/jerseyjunction_uploads/q6fb9r25vwafcwkfhdca.jpg',
     },
     status: {
       type: String,

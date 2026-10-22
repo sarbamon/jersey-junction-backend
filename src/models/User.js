@@ -15,7 +15,7 @@ const userSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
       match: [
-        /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
+        /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
         'Please add a valid email',
       ],
     },
@@ -33,6 +33,18 @@ const userSchema = new mongoose.Schema(
     phone: {
       type: String,
       default: '',
+    },
+    isBanned: {
+      type: Boolean,
+      default: false,
+    },
+    banReason: {
+      type: String,
+      default: '',
+    },
+    status: {
+      type: String,
+      default: 'Active',
     },
   },
   {

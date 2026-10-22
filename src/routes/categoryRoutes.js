@@ -3,8 +3,8 @@ const router = express.Router();
 const Category = require('../models/Category');
 
 const DEFAULT_CATEGORIES = [
-  { name: 'Player Version', slug: 'player-version', tag: 'Athletic Slim Fit', image: '/jersey/WhatsApp Image 2026-09-08 at 11.44.17 PM.jpeg', status: 'Active' },
-  { name: 'Fan Version', slug: 'fan-version', tag: 'Standard Fit', image: '/jersey/WhatsApp Image 2026-09-08 at 11.44.39 PM.jpeg', status: 'Active' },
+  { name: 'Player Version', slug: 'player-version', tag: 'Athletic Slim Fit', image: 'https://res.cloudinary.com/mcsohx4p/image/upload/v1792689803/jerseyjunction_uploads/yznaq5f6ciiy3unby7e8.jpg', status: 'Active' },
+  { name: 'Fan Version', slug: 'fan-version', tag: 'Standard Fit', image: 'https://res.cloudinary.com/mcsohx4p/image/upload/v1792689804/jerseyjunction_uploads/tu9yhwz7tuelbg3rmp5d.jpg', status: 'Active' },
 ];
 
 let hasSeeded = false;
@@ -107,7 +107,7 @@ router.post('/', async (req, res) => {
       name,
       slug: catSlug,
       tag: tag || 'Sport Collection',
-      image: image || '/jersey/WhatsApp Image 2026-09-08 at 11.44.00 PM.jpeg',
+      image: image || 'https://res.cloudinary.com/mcsohx4p/image/upload/v1792689801/jerseyjunction_uploads/q6fb9r25vwafcwkfhdca.jpg',
       status: status || 'Active',
       order: nextOrder,
     });

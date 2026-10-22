@@ -44,17 +44,24 @@ const sendTokenResponse = (user, statusCode, res) => {
 router.post('/register', async (req, res, next) => {
   try {
     const { name, email, password, phone } = req.body;
+    const cleanEmail = (email || '').toLowerCase().trim();
+    const cleanName = (name || '').trim();
+    const cleanPhone = (phone || '').trim();
 
-    const existingUser = await User.findOne({ email });
+    if (!cleanEmail || !password) {
+      return res.status(400).json({ success: false, error: 'Email and password are required' });
+    }
+
+    const existingUser = await User.findOne({ email: cleanEmail });
     if (existingUser) {
       return res.status(400).json({ success: false, error: 'Email already registered' });
     }
 
     const user = await User.create({
-      name,
-      email,
+      name: cleanName || cleanEmail.split('@')[0],
+      email: cleanEmail,
       password,
-      phone,
+      phone: cleanPhone,
     });
 
     sendTokenResponse(user, 201, res);
@@ -74,7 +81,16 @@ router.post('/login', async (req, res, next) => {
       return res.status(400).json({ success: false, error: 'Please provide email and password' });
     }
 
-    const user = await User.findOne({ email }).select('+password');
+    const cleanEmail = (email || '').toLowerCase().trim();
+
+    // Find by exact lowercased email or case-insensitive regex fallback
+    const user = await User.findOne({
+      $or: [
+        { email: cleanEmail },
+        { email: new RegExp(`^${cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+      ]
+    }).select('+password');
+
     if (!user) {
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
@@ -82,6 +98,15 @@ router.post('/login', async (req, res, next) => {
     const isMatch = await user.matchPassword(password);
     if (!isMatch) {
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
+    }
+
+    if (user.isBanned || user.status === 'Banned') {
+      return res.status(403).json({
+        success: false,
+        error: user.banReason
+          ? `Account Suspended: ${user.banReason}. Please contact support.`
+          : 'Your account has been suspended by the administrator. Please contact support.',
+      });
     }
 
     sendTokenResponse(user, 200, res);
@@ -97,6 +122,7 @@ router.post('/google', async (req, res, next) => {
   try {
     let { email, name, credential, accessToken } = req.body;
 
+    // 1. If accessToken provided (from Google OAuth2 token client popup)
     if (accessToken) {
       try {
         const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
@@ -112,34 +138,71 @@ router.post('/google', async (req, res, next) => {
       }
     }
 
+    // 2. If credential provided (from Google Identity Services ID Token / One Tap)
     if (credential) {
       try {
-        const decoded = jwt.decode(credential);
-        if (decoded && decoded.email) {
-          email = decoded.email;
-          name = decoded.name || name;
+        const tokenInfoRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${credential}`);
+        if (tokenInfoRes.ok) {
+          const tokenInfo = await tokenInfoRes.json();
+          if (tokenInfo.email) {
+            email = tokenInfo.email;
+            name = tokenInfo.name || name;
+          }
         }
-      } catch (e) {
-        console.error('Google JWT decode error:', e);
+      } catch (fetchErr) {
+        console.error('Google tokeninfo fetch error:', fetchErr);
+      }
+
+      // Fallback: decode JWT directly if network verification was unavailable
+      if (!email) {
+        try {
+          const decoded = jwt.decode(credential);
+          if (decoded && decoded.email) {
+            email = decoded.email;
+            name = decoded.name || name;
+          }
+        } catch (e) {
+          console.error('Google JWT decode error:', e);
+        }
       }
     }
 
-    if (!email) {
+    const cleanEmail = (email || '').toLowerCase().trim();
+
+    if (!cleanEmail) {
       return res.status(400).json({ success: false, error: 'Google email is required' });
     }
 
-    let user = await User.findOne({ email });
+    let user = await User.findOne({
+      $or: [
+        { email: cleanEmail },
+        { email: new RegExp(`^${cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+      ],
+    });
+
+    // Check if user account is suspended/banned
+    if (user && (user.isBanned || user.status === 'Banned')) {
+      return res.status(403).json({
+        success: false,
+        error: `Account Suspended: ${user.banReason || 'Your account has been suspended by store administration'}. Please contact support.`,
+      });
+    }
 
     if (!user) {
-      // Create new user in MongoDB
+      // Create new customer account in MongoDB
       const randomPassword = Math.random().toString(36).substring(2, 15) + '!A1';
       user = await User.create({
-        name: name || email.split('@')[0],
-        email,
+        name: name || cleanEmail.split('@')[0],
+        email: cleanEmail,
         password: randomPassword,
         role: 'user',
+        status: 'Active',
+        isBanned: false,
         phone: '',
       });
+    } else if (name && (!user.name || user.name === user.email.split('@')[0])) {
+      user.name = name;
+      await user.save();
     }
 
     sendTokenResponse(user, 200, res);
@@ -179,6 +242,108 @@ router.get('/users', async (req, res, next) => {
       success: true,
       count: users.length,
       data: users,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// @route   PUT /api/auth/users/:id/ban
+// @desc    Ban or Unban customer account (Admin only)
+// @access  Public / Admin
+router.put('/users/:id/ban', async (req, res, next) => {
+  try {
+    const { isBanned, reason } = req.body;
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'Customer not found' });
+    }
+    if (user.role === 'admin') {
+      return res.status(400).json({ success: false, error: 'Cannot ban admin accounts' });
+    }
+
+    user.isBanned = Boolean(isBanned);
+    user.status = user.isBanned ? 'Banned' : 'Active';
+    user.banReason = user.isBanned ? (reason || 'Account suspended by store admin') : '';
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: user.isBanned ? 'Customer account has been BANNED' : 'Customer account has been RESTORED (Active)',
+      user: {
+        id: user._id,
+        isBanned: user.isBanned,
+        status: user.status,
+        banReason: user.banReason,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// @route   PUT /api/auth/users/:id/reset-password
+// @desc    Admin manually reset customer password
+// @access  Public / Admin
+router.put('/users/:id/reset-password', async (req, res, next) => {
+  try {
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
+    }
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'Customer not found' });
+    }
+    user.password = newPassword;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: `Password successfully updated for ${user.email}`,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// @route   POST /api/auth/reset-password
+// @desc    Customer self-service reset password by email
+// @access  Public
+router.post('/reset-password', async (req, res, next) => {
+  try {
+    const { email, newPassword } = req.body;
+    const cleanEmail = (email || '').toLowerCase().trim();
+
+    if (!cleanEmail || !newPassword) {
+      return res.status(400).json({ success: false, error: 'Email and new password are required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
+    }
+
+    const user = await User.findOne({
+      $or: [
+        { email: cleanEmail },
+        { email: new RegExp(`^${cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+      ],
+    });
+
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'No account found with this email' });
+    }
+
+    if (user.isBanned || user.status === 'Banned') {
+      return res.status(403).json({ success: false, error: 'This account is suspended. Please contact store support.' });
+    }
+
+    user.password = newPassword;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Password reset successfully! You can now sign in with your new password.',
     });
   } catch (err) {
     next(err);

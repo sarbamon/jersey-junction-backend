@@ -1,16 +1,13 @@
 {
-  "apiToken": "",
-  "pickupAddressId": "WH-01",
+  "apiToken": "lklUWZZEqQkF5iLiwuNNmKmrsuwLkfbJEapyPSVfCZ3iwf6JrStcb2HrYQfujWeVDH0HQhgkt6tdBc6yugBDtzZdOl08NrJlknuTEm0r3ZCGRNeJTwuxyMr1DxnezzobowP5xAtSaOhORQgpVTtzBgksMg2NIe6wdL4Mp4xd5yVKMb52CFwNdU7eDa1PYMvkruCP5dYeuWRpYOFCWgyNHzymNoXsI72oTzBEBuz3R6McWRVa0VH87kfTXiorHtaY",
+  "apiKey": "lklUWZZEqQkF5iLiwuNNmKmrsuwLkfbJEapyPSVfCZ3iwf6JrStcb2HrYQfujWeVDH0HQhgkt6tdBc6yugBDtzZdOl08NrJlknuTEm0r3ZCGRNeJTwuxyMr1DxnezzobowP5xAtSaOhORQgpVTtzBgksMg2NIe6wdL4Mp4xd5yVKMb52CFwNdU7eDa1PYMvkruCP5dYeuWRpYOFCWgyNHzymNoXsI72oTzBEBuz3R6McWRVa0VH87kfTXiorHtaY",
+  "apiUsername": "ela16040",
+  "pickupAddressId": "34272",
   "isLiveMode": true,
-  "senderName": "Jersey Junction Fulfillment",
-  "senderPhone": "+91 98765 43210",
-  "senderEmail": "support@jerseyjunction.in",
-  "senderAddress": "Shop 14, Prestige Football Hub, Stadium Road",
-  "senderCity": "Mumbai",
-  "senderState": "Maharashtra",
-  "senderPincode": "400001",
   "defaultWeight": 0.4,
   "defaultLength": 25,
   "defaultBreadth": 20,
-  "defaultHeight": 3
+  "defaultHeight": 3,
+  "senderName": "Main Hub",
+  "senderPincode": "782462"
 }
