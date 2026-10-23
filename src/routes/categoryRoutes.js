@@ -136,16 +136,45 @@ router.put('/:id', async (req, res) => {
   }
 });
 
+// POST /api/categories/bulk-delete - Delete multiple categories
+router.post('/bulk-delete', async (req, res) => {
+  try {
+    invalidateCategoryCache();
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'No category IDs provided' });
+    }
+
+    const objectIds = ids.filter(id => typeof id === 'string' && id.match(/^[0-9a-fA-F]{24}$/));
+    const query = {
+      $or: [
+        { _id: { $in: objectIds } },
+        { slug: { $in: ids } }
+      ]
+    };
+
+    const result = await Category.deleteMany(query);
+    res.json({
+      success: true,
+      count: result.deletedCount,
+      message: `Deleted ${result.deletedCount} categories successfully`
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // DELETE category
 router.delete('/:id', async (req, res) => {
   try {
     invalidateCategoryCache();
-    let category = await Category.findById(req.params.id);
+    const isObjectId = req.params.id && req.params.id.match(/^[0-9a-fA-F]{24}$/);
+    let category = isObjectId ? await Category.findById(req.params.id) : null;
     if (!category) {
       category = await Category.findOne({ slug: req.params.id });
     }
     if (!category) {
-      return res.status(404).json({ success: false, message: 'Category not found' });
+      return res.status(200).json({ success: true, message: 'Category already deleted or not found' });
     }
     await Category.findByIdAndDelete(category._id);
     res.json({ success: true, message: 'Category deleted successfully' });

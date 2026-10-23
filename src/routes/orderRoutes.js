@@ -321,6 +321,45 @@ router.patch('/:id', async (req, res, next) => {
   }
 });
 
+// POST /api/orders/bulk-delete - Delete multiple orders
+router.post('/bulk-delete', async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'No order IDs provided' });
+    }
+
+    const formattedIds = [];
+    ids.forEach(id => {
+      if (typeof id === 'string') {
+        formattedIds.push(id);
+        if (id.startsWith('#')) {
+          formattedIds.push(id.replace('#', ''));
+        } else {
+          formattedIds.push(`#${id}`);
+        }
+      }
+    });
+
+    const objectIds = ids.filter(id => typeof id === 'string' && id.match(/^[0-9a-fA-F]{24}$/));
+
+    const result = await Order.deleteMany({
+      $or: [
+        { orderId: { $in: formattedIds } },
+        { _id: { $in: objectIds } }
+      ]
+    });
+
+    res.status(200).json({
+      success: true,
+      count: result.deletedCount,
+      message: `Deleted ${result.deletedCount} orders successfully`,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // DELETE /api/orders/:id - Delete an order by ID
 router.delete('/:id', async (req, res, next) => {
   try {

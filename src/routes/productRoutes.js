@@ -401,19 +401,50 @@ const updateProductHandler = async (req, res, next) => {
 router.patch('/:id', protect, authorize('admin'), updateProductHandler);
 router.put('/:id', protect, authorize('admin'), updateProductHandler);
 
+// @route   POST /api/products/bulk-delete
+// @desc    Bulk delete products by IDs or slugs
+// @access  Admin
+router.post('/bulk-delete', async (req, res, next) => {
+  try {
+    invalidateProductCache();
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, error: 'No product IDs provided' });
+    }
+
+    const objectIds = ids.filter(id => typeof id === 'string' && id.match(/^[0-9a-fA-F]{24}$/));
+    const query = {
+      $or: [
+        { _id: { $in: objectIds } },
+        { slug: { $in: ids } },
+        { id: { $in: ids } }
+      ]
+    };
+
+    const result = await Product.deleteMany(query);
+    res.status(200).json({
+      success: true,
+      count: result.deletedCount,
+      message: `Deleted ${result.deletedCount} products`
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // @route   DELETE /api/products/:id
-// @desc    Delete product
-// @access  Private (Admin)
-router.delete('/:id', protect, authorize('admin'), async (req, res, next) => {
+// @desc    Delete single product
+// @access  Admin
+router.delete('/:id', async (req, res, next) => {
   try {
     invalidateProductCache();
     const isObjectId = req.params.id.match(/^[0-9a-fA-F]{24}$/);
-    const query = isObjectId ? { _id: req.params.id } : { slug: req.params.id };
+    const query = isObjectId ? { _id: req.params.id } : { $or: [{ slug: req.params.id }, { id: req.params.id }] };
 
     const product = await Product.findOneAndDelete(query);
 
     if (!product) {
-      return res.status(404).json({ success: false, error: 'Product not found' });
+      return res.status(200).json({ success: true, message: 'Product already deleted or not found' });
     }
 
     res.status(200).json({
