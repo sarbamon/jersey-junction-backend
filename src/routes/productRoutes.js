@@ -404,7 +404,7 @@ router.put('/:id', protect, authorize('admin'), updateProductHandler);
 // @route   POST /api/products/bulk-delete
 // @desc    Bulk delete products by IDs or slugs
 // @access  Admin
-router.post('/bulk-delete', async (req, res, next) => {
+router.post('/bulk-delete', protect, authorize('admin'), async (req, res, next) => {
   try {
     invalidateProductCache();
     const { ids } = req.body;
@@ -435,7 +435,7 @@ router.post('/bulk-delete', async (req, res, next) => {
 // @route   DELETE /api/products/:id
 // @desc    Delete single product
 // @access  Admin
-router.delete('/:id', async (req, res, next) => {
+router.delete('/:id', protect, authorize('admin'), async (req, res, next) => {
   try {
     invalidateProductCache();
     const isObjectId = req.params.id.match(/^[0-9a-fA-F]{24}$/);

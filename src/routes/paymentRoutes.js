@@ -5,6 +5,7 @@ const Razorpay = require('razorpay');
 const Order = require('../models/Order');
 const User = require('../models/User');
 const { adjustProductStock } = require('../utils/inventory');
+const { calculateCartTotals } = require('../utils/pricing');
 
 const getRazorpayInstance = () => {
   const key_id = process.env.RAZORPAY_KEY_ID?.trim();
@@ -31,17 +32,51 @@ router.get('/key', (req, res) => {
   res.json({ success: true, keyId });
 });
 
+// POST /api/payment/calculate-summary
+// Authoritative price calculation endpoint for Cart, Checkout, and Buy Now
+router.post('/calculate-summary', async (req, res, next) => {
+  try {
+    const { items, shippingMethod, couponCode } = req.body;
+
+    const summary = await calculateCartTotals({
+      items,
+      shippingMethod,
+      couponCode,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: summary,
+    });
+  } catch (error) {
+    const statusCode = error.statusCode || 400;
+    res.status(statusCode).json({
+      success: false,
+      message: error.message || 'Error calculating order totals',
+    });
+  }
+});
+
 // POST /api/payment/create-order
-// Pre-creates the Razorpay gateway order AND stores a Pending Order in MongoDB
-// so that backend webhook can confirm it even if the user closes the window.
+// SECURE RAZORPAY ORDER CREATION:
+// 1. Authoritatively calculates order subtotal, customization surcharges, coupons, and shipping on the backend.
+// 2. Ignores any client-submitted 'amount' or 'price'.
+// 3. Creates the Razorpay order using server-calculated integer paise.
+// 4. Pre-creates the Pending Order in MongoDB with verified items and prices.
 router.post('/create-order', async (req, res) => {
   try {
-    const amount = Number(req.body.amount);
-    const currency = req.body.currency || 'INR';
-    const orderData = req.body.orderData; // optional complete order payload from checkout
+    const { orderData } = req.body;
+    const clientItems = req.body.items || orderData?.items || [];
+    const clientShippingMethod = req.body.shippingMethod || orderData?.shippingMethod || 'standard';
+    const clientCouponCode = req.body.couponCode || orderData?.couponCode || '';
 
-    if (orderData && orderData.email) {
-      const registeredUser = await User.findOne({ email: orderData.email.trim().toLowerCase() });
+    const customerEmail = (orderData?.email || req.body.email || '').trim().toLowerCase();
+    const customerName = (orderData?.customerName || req.body.customerName || 'Customer').trim();
+    const customerPhone = (orderData?.phone || req.body.phone || '').trim();
+    const shippingAddress = orderData?.shippingAddress || req.body.shippingAddress || {};
+
+    if (customerEmail) {
+      const registeredUser = await User.findOne({ email: customerEmail });
       if (!registeredUser) {
         return res.status(401).json({
           success: false,
@@ -50,83 +85,98 @@ router.post('/create-order', async (req, res) => {
       }
     }
 
-    if (!Number.isFinite(amount) || amount < 1) {
-      return res.status(400).json({
+    // Backend authoritative calculation
+    let breakdown;
+    try {
+      breakdown = await calculateCartTotals({
+        items: clientItems,
+        shippingMethod: clientShippingMethod,
+        couponCode: clientCouponCode,
+      });
+    } catch (calcErr) {
+      return res.status(calcErr.statusCode || 400).json({
         success: false,
-        message: 'Amount must be at least ₹1',
+        message: calcErr.message || 'Invalid cart or pricing configuration',
       });
     }
 
-    if (currency !== 'INR') {
+    if (!breakdown || breakdown.amountInPaise <= 0) {
       return res.status(400).json({
         success: false,
-        message: 'Unsupported currency',
+        message: 'Order total must be greater than ₹0',
       });
     }
 
+    const currency = 'INR';
     const razorpay = getRazorpayInstance();
     const receiptId = `rcpt_${Date.now()}`;
     const internalOrderId = orderData?.id || `#JJ${Math.floor(1000 + Math.random() * 9000)}`;
 
     const rzpOrder = await razorpay.orders.create({
-      amount: Math.round(amount * 100),
+      amount: breakdown.amountInPaise,
       currency,
       receipt: receiptId,
       notes: {
         orderId: internalOrderId,
-        email: orderData?.email || '',
-        customerName: orderData?.customerName || '',
+        email: customerEmail,
+        customerName: customerName,
       },
     });
 
-    // If orderData is supplied, pre-create the Order in MongoDB in 'Pending' state
-    let createdMongoOrder = null;
-    if (orderData && Array.isArray(orderData.items) && orderData.items.length > 0) {
-      try {
-        const orderDoc = {
-          orderId: internalOrderId,
-          customerName: orderData.customerName || 'Customer',
-          email: orderData.email ? orderData.email.toLowerCase() : '',
-          phone: orderData.phone || '',
-          shippingAddress: orderData.shippingAddress || {},
-          items: orderData.items,
-          subtotal: orderData.subtotal || amount,
-          shippingFee: orderData.shippingFee || 0,
-          discountAmount: orderData.discountAmount || 0,
-          totalAmount: orderData.totalAmount || amount,
-          paymentMethod: 'Razorpay',
-          paymentStatus: 'Pending',
-          orderStatus: 'Pending',
-          razorpayOrderId: rzpOrder.id,
-          stockDeducted: false,
-          date: new Date().toISOString().split('T')[0],
-          timeline: [
-            {
-              status: 'Pending',
-              timestamp: new Date().toISOString().replace('T', ' ').substring(0, 16),
-              note: `Payment initiated via Razorpay (Order ID: ${rzpOrder.id})`,
-            },
-          ],
-        };
+    // Store authoritative Pending Order in MongoDB
+    const orderDoc = {
+      orderId: internalOrderId,
+      customerName: customerName,
+      email: customerEmail,
+      phone: customerPhone,
+      shippingAddress: shippingAddress,
+      items: breakdown.items.map((item) => ({
+        productId: item.productId,
+        name: item.name,
+        size: item.size,
+        version: item.version,
+        customName: item.customName,
+        customNumber: item.customNumber,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        image: item.image,
+      })),
+      subtotal: breakdown.subtotal,
+      shippingFee: breakdown.shippingFee,
+      discountAmount: breakdown.discountAmount,
+      totalAmount: breakdown.totalAmount,
+      paymentMethod: 'Razorpay',
+      paymentStatus: 'Pending',
+      orderStatus: 'Pending',
+      razorpayOrderId: rzpOrder.id,
+      stockDeducted: false,
+      date: new Date().toISOString().split('T')[0],
+      timeline: [
+        {
+          status: 'Pending',
+          timestamp: new Date().toISOString().replace('T', ' ').substring(0, 16),
+          note: `Payment initiated via Razorpay (Order ID: ${rzpOrder.id}, Amount: ₹${breakdown.totalAmount})`,
+        },
+      ],
+    };
 
-        // Check if already exists, else create
-        createdMongoOrder = await Order.findOneAndUpdate(
-          { orderId: internalOrderId },
-          { $set: orderDoc },
-          { upsert: true, new: true, setDefaultsOnInsert: true }
-        );
+    const createdMongoOrder = await Order.findOneAndUpdate(
+      { orderId: internalOrderId },
+      { $set: orderDoc },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
 
-        console.log(`[Payment] Pre-created Pending order: ${internalOrderId} for Razorpay order ${rzpOrder.id}`);
-      } catch (dbErr) {
-        console.error('[Payment] Could not pre-save pending order in MongoDB:', dbErr.message);
-      }
-    }
+    console.log(`[Payment] Pre-created verified Pending order: ${internalOrderId} for Razorpay order ${rzpOrder.id} (₹${breakdown.totalAmount})`);
+
+    const keyId = process.env.RAZORPAY_KEY_ID?.trim();
 
     res.json({
       success: true,
       data: rzpOrder,
+      keyId,
       internalOrderId,
       order: createdMongoOrder,
+      breakdown,
     });
   } catch (error) {
     console.error('Razorpay order creation failed:', error.message);
@@ -139,7 +189,7 @@ router.post('/create-order', async (req, res) => {
 });
 
 // POST /api/payment/verify
-// Frontend verification callback when user completes payment and stays on page
+// Frontend verification callback when user completes Razorpay payment
 router.post('/verify', async (req, res) => {
   try {
     const {
@@ -167,7 +217,7 @@ router.post('/verify', async (req, res) => {
     if (!secret) {
       return res.status(503).json({
         success: false,
-        message: 'Payment verification is not configured',
+        message: 'Payment verification is not configured on server',
       });
     }
 
@@ -177,13 +227,12 @@ router.post('/verify', async (req, res) => {
       .digest();
 
     let received;
-
     try {
       received = Buffer.from(razorpay_signature, 'hex');
     } catch {
       return res.status(400).json({
         success: false,
-        message: 'Invalid payment signature',
+        message: 'Invalid payment signature format',
       });
     }
 
@@ -193,46 +242,59 @@ router.post('/verify', async (req, res) => {
     ) {
       return res.status(400).json({
         success: false,
-        message: 'Payment signature verification failed',
+        message: 'Payment signature verification failed. Forged or mismatched signature.',
       });
     }
 
-    // Signature verified! Now find and mark MongoDB order as Paid
-    try {
-      const order = await Order.findOne({ razorpayOrderId: razorpay_order_id });
-      if (order) {
-        order.razorpayPaymentId = razorpay_payment_id;
-        order.paymentStatus = 'Paid';
-        if (order.orderStatus === 'Pending') {
-          order.orderStatus = 'Confirmed';
-        }
-
-        if (!order.stockDeducted) {
-          await adjustProductStock(order.items, -1);
-          order.stockDeducted = true;
-        }
-
-        const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 16);
-        if (!order.timeline.some((t) => t.note && t.note.includes(razorpay_payment_id))) {
-          order.timeline.push({
-            status: order.orderStatus,
-            timestamp,
-            note: `Payment verified via Razorpay (Payment ID: ${razorpay_payment_id})`,
-          });
-        }
-
-        await order.save();
-        console.log(`[Payment] Order ${order.orderId} marked Paid via frontend verification`);
-      }
-    } catch (orderUpdateErr) {
-      console.error('[Payment] Error confirming order in DB:', orderUpdateErr.message);
+    // Signature verified! Confirm the pending order in MongoDB
+    const order = await Order.findOne({ razorpayOrderId: razorpay_order_id });
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: `No pending order found for Razorpay order ID ${razorpay_order_id}`,
+      });
     }
+
+    // Idempotency: if already paid, return early without re-deducting stock or adding duplicate timeline entries
+    if (order.paymentStatus === 'Paid') {
+      return res.status(200).json({
+        success: true,
+        message: 'Payment already verified and order confirmed',
+        paymentId: order.razorpayPaymentId || razorpay_payment_id,
+        orderId: order.orderId,
+      });
+    }
+
+    order.razorpayPaymentId = razorpay_payment_id;
+    order.paymentStatus = 'Paid';
+    if (order.orderStatus === 'Pending') {
+      order.orderStatus = 'Confirmed';
+    }
+
+    // Atomically deduct stock once
+    if (!order.stockDeducted) {
+      await adjustProductStock(order.items, -1);
+      order.stockDeducted = true;
+    }
+
+    const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 16);
+    if (!order.timeline.some((t) => t.note && t.note.includes(razorpay_payment_id))) {
+      order.timeline.push({
+        status: order.orderStatus,
+        timestamp,
+        note: `Payment verified via Razorpay (Payment ID: ${razorpay_payment_id})`,
+      });
+    }
+
+    await order.save();
+    console.log(`[Payment] Order ${order.orderId} successfully marked Paid via verified signature`);
 
     return res.json({
       success: true,
-      message: 'Payment signature verified',
+      message: 'Payment signature verified successfully',
       paymentId: razorpay_payment_id,
-      orderId: razorpay_order_id,
+      orderId: order.orderId,
+      razorpayOrderId: razorpay_order_id,
     });
   } catch (error) {
     console.error('Payment verification failed:', error.message);
@@ -305,7 +367,12 @@ router.post('/webhook', async (req, res) => {
         const order = await Order.findOne({ $or: searchConditions });
 
         if (order) {
-          const wasPaid = order.paymentStatus === 'Paid';
+          // Idempotency check: if already paid, do nothing
+          if (order.paymentStatus === 'Paid') {
+            console.log(`[Webhook] Order ${order.orderId} is already marked as Paid. Skipping re-processing.`);
+            return res.status(200).json({ status: 'ok', alreadyProcessed: true });
+          }
+
           order.paymentStatus = 'Paid';
           if (order.orderStatus === 'Pending') {
             order.orderStatus = 'Confirmed';
@@ -335,7 +402,7 @@ router.post('/webhook', async (req, res) => {
 
           await order.save();
           console.log(
-            `[Webhook] SUCCESS: Order ${order.orderId} updated to Paid via Backend-to-Backend Webhook (User closed window protected!)`
+            `[Webhook] SUCCESS: Order ${order.orderId} updated to Paid via Backend-to-Backend Webhook`
           );
         } else {
           console.warn(`[Webhook] Could not find pending order in DB for rzpOrderId: ${rzpOrderId}, notesOrderId: ${notesOrderId}`);
@@ -369,9 +436,97 @@ router.post('/webhook', async (req, res) => {
     return res.status(200).json({ status: 'ok', received: true });
   } catch (error) {
     console.error('[Webhook Error]:', error);
-    // Respond 200 to acknowledge webhook receipt even if error to prevent endless retry storms
     return res.status(200).json({ status: 'error', message: error.message });
   }
 });
+
+/**
+ * Direct Razorpay API Reconciliation:
+ * Queries Razorpay REST API for order status.
+ * If user paid but closed tab / lost connection or localhost webhook wasn't delivered,
+ * this directly confirms with Razorpay's servers.
+ */
+const reconcileRazorpayOrder = async (order) => {
+  if (!order || !order.razorpayOrderId) return order;
+  if (order.paymentStatus === 'Paid') return order;
+
+  try {
+    const razorpay = getRazorpayInstance();
+    const rzpOrder = await razorpay.orders.fetch(order.razorpayOrderId);
+
+    if (rzpOrder.status === 'paid' || (rzpOrder.amount_paid && rzpOrder.amount_paid >= rzpOrder.amount)) {
+      const payments = await razorpay.orders.fetchPayments(order.razorpayOrderId);
+      const successfulPayment = (payments.items || []).find(
+        (p) => p.status === 'captured' || p.status === 'authorized'
+      );
+      const paymentId = successfulPayment ? successfulPayment.id : (payments.items?.[0]?.id || 'RZP_RECONCILED');
+
+      order.paymentStatus = 'Paid';
+      if (order.orderStatus === 'Pending') {
+        order.orderStatus = 'Confirmed';
+      }
+      order.razorpayPaymentId = paymentId;
+
+      if (!order.stockDeducted) {
+        await adjustProductStock(order.items, -1);
+        order.stockDeducted = true;
+      }
+
+      const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 16);
+      if (!order.timeline.some((t) => t.note && t.note.includes(paymentId))) {
+        order.timeline.push({
+          status: order.orderStatus,
+          timestamp,
+          note: `Payment verified via Razorpay API Sync (Payment ID: ${paymentId})`,
+        });
+      }
+
+      await order.save();
+      console.log(`[Reconciliation] Order ${order.orderId} successfully synced from Razorpay API -> Paid (${paymentId})`);
+    }
+  } catch (err) {
+    console.warn(`[Reconciliation] Note: Razorpay sync for ${order.orderId}:`, err.message);
+  }
+
+  return order;
+};
+
+// POST /api/payment/sync/:orderId
+// Direct sync endpoint to check and reconcile payment status with Razorpay
+router.post('/sync/:orderId', async (req, res) => {
+  try {
+    const rawId = req.params.orderId;
+    const formattedSearch = rawId.startsWith('#') ? rawId : `#${rawId}`;
+
+    const order = await Order.findOne({
+      $or: [
+        { orderId: rawId },
+        { orderId: formattedSearch },
+        { razorpayOrderId: rawId },
+      ],
+    });
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    const updated = await reconcileRazorpayOrder(order);
+
+    res.status(200).json({
+      success: true,
+      message: updated.paymentStatus === 'Paid' ? 'Order payment confirmed with Razorpay' : 'Order payment status unchanged (Pending on Razorpay)',
+      order: {
+        orderId: updated.orderId,
+        paymentStatus: updated.paymentStatus,
+        orderStatus: updated.orderStatus,
+        razorpayPaymentId: updated.razorpayPaymentId,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.reconcileRazorpayOrder = reconcileRazorpayOrder;
 
 module.exports = router;

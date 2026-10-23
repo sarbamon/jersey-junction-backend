@@ -146,30 +146,30 @@ let cachedSessionToken = null;
 let sessionTokenExpiry = 0;
 
 // Authenticate session token directly with iCarry.in API
-async function getActiveSession(config) {
+async function getActiveSession(config, forceFresh = false) {
   const username = config.apiUsername ? String(config.apiUsername).trim() : '';
   const key = (config.apiKey || config.apiToken) ? String(config.apiKey || config.apiToken).trim() : '';
 
   if (!key) {
     return {
       token: null,
-      error: 'iCarry API Key is missing. Please save ICARRY_API_KEY in your .env file (remember to press Ctrl+S in your .env editor) and restart the backend server.',
+      error: 'iCarry API Key is missing. Please save ICARRY_API_KEY in your .env file and restart the backend server.',
     };
   }
 
   if (!username) {
     return {
       token: null,
-      error: 'iCarry API Username is missing. Please save ICARRY_API_USERNAME in your .env file (remember to press Ctrl+S in your .env editor) and restart the backend server.',
+      error: 'iCarry API Username is missing. Please save ICARRY_API_USERNAME in your .env file and restart the backend server.',
     };
   }
 
-  if (cachedSessionToken && Date.now() < sessionTokenExpiry) {
+  if (!forceFresh && cachedSessionToken && Date.now() < sessionTokenExpiry) {
     return { token: cachedSessionToken, error: null };
   }
 
   try {
-    console.log(`[iCarry] Authenticating with iCarry.in (username: "${username}")...`);
+    console.log(`[iCarry] Authenticating with iCarry.in (username: "${username}", forceFresh: ${forceFresh})...`);
     const res = await fetch('https://www.icarry.in/api_login', {
       method: 'POST',
       headers: {
@@ -194,7 +194,7 @@ async function getActiveSession(config) {
 
     if (data && (data.api_token || data.token)) {
       cachedSessionToken = data.api_token || data.token;
-      sessionTokenExpiry = Date.now() + (50 * 60 * 1000);
+      sessionTokenExpiry = Date.now() + (15 * 60 * 1000);
       console.log('[iCarry] Successfully authenticated live session token.');
       return { token: cachedSessionToken, error: null };
     }
@@ -205,6 +205,45 @@ async function getActiveSession(config) {
     console.error('[iCarry] api_login error:', err);
     return { token: null, error: `Failed to connect to iCarry.in: ${err.message}` };
   }
+}
+
+// Resilient API poster that auto-refreshes token on expiry
+async function executeICarryPost(endpointUrl, paramsBody, config, attempts = 2) {
+  let session = await getActiveSession(config);
+  if (!session.token) {
+    return { success: false, error: session.error || 'Authentication failed', rawText: '', data: null };
+  }
+
+  const urlWithToken = `${endpointUrl}&api_token=${encodeURIComponent(session.token)}`;
+  const response = await fetch(urlWithToken, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Accept': 'application/json',
+    },
+    body: paramsBody.toString(),
+  });
+
+  const rawText = await response.text();
+
+  // If token is expired or unauthorized, automatically re-authenticate once and retry
+  if (attempts > 1 && (rawText.includes('api_token is expired') || rawText.includes('invalid') || rawText.includes('permission to access the API'))) {
+    console.warn('[iCarry] Session token invalid/expired. Forcing re-authentication and retrying...');
+    session = await getActiveSession(config, true);
+    if (!session.token) {
+      return { success: false, error: session.error, rawText, data: null };
+    }
+    return executeICarryPost(endpointUrl, paramsBody, config, attempts - 1);
+  }
+
+  let data;
+  try {
+    data = JSON.parse(rawText);
+  } catch {
+    data = null;
+  }
+
+  return { success: response.ok, rawText, data, status: response.status };
 }
 
 // Backwards-compatible helper
@@ -512,6 +551,82 @@ router.post('/estimate', async (req, res) => {
   } catch (error) {
     console.error('Error fetching estimates:', error);
     res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// POST /api/icarry/check-pincode - Check if delivery pincode is serviceable by iCarry
+router.post('/check-pincode', async (req, res) => {
+  try {
+    const config = getICarryConfig();
+    const pincode = String(req.body.pincode || req.query.pincode || '').trim();
+
+    if (!pincode || !/^[1-9][0-9]{5}$/.test(pincode)) {
+      return res.status(200).json({
+        success: true,
+        available: false,
+        message: 'Please enter a valid 6-digit Indian pincode.',
+      });
+    }
+
+    const effectiveOriginPincode = String(config.senderPincode || '400052').trim();
+    const effectivePickupAddressId = String(config.pickupAddressId || '');
+
+    const estimateParams = new URLSearchParams({
+      origin_pincode: String(effectiveOriginPincode),
+      pickup_pincode: String(effectiveOriginPincode),
+      destination_pincode: String(pincode),
+      weight: '400',
+      length: '25',
+      breadth: '20',
+      height: '3',
+      origin_country_code: 'IN',
+      destination_country_code: 'IN',
+      country_code: 'IN',
+      shipment_mode: 'S',
+      shipment_type: 'P',
+      shipment_value: '1000',
+      parcel_type: 'P',
+      parcel_value: '1000',
+    });
+
+    if (effectivePickupAddressId) {
+      estimateParams.append('pickup_address_id', effectivePickupAddressId);
+    }
+
+    const { data, rawText } = await executeICarryPost('https://www.icarry.in/api_get_estimate', estimateParams, config);
+
+    const rawList = (data && (data.estimate || data.couriers || data.data || data.available_couriers || (Array.isArray(data) ? data : null))) || [];
+
+    if (Array.isArray(rawList) && rawList.length > 0) {
+      const courierNames = rawList.map(c => c.courier_name || c.name || c.courier || c.courier_group_name).filter(Boolean);
+      const fastestDays = rawList[0].estimated_delivery_days ? `${rawList[0].estimated_delivery_days} Days` : (rawList[0].tat || '2 - 4 Days');
+
+      return res.status(200).json({
+        success: true,
+        available: true,
+        pincode,
+        estimatedDays: fastestDays,
+        couriers: courierNames.slice(0, 3),
+        codAvailable: true,
+        message: `Delivery available to ${pincode}! (Est. ${fastestDays})`,
+      });
+    } else {
+      return res.status(200).json({
+        success: true,
+        available: false,
+        pincode,
+        message: `Delivery is currently not available to pincode ${pincode}.`,
+      });
+    }
+  } catch (error) {
+    console.error('Error checking pincode:', error);
+    const pincode = String(req.body?.pincode || req.query?.pincode || '').trim();
+    res.status(200).json({ 
+      success: true, 
+      available: false, 
+      pincode, 
+      message: pincode ? `Delivery is currently not available to pincode ${pincode}.` : 'Unable to check delivery availability.' 
+    });
   }
 });
 

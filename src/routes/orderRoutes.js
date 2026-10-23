@@ -3,6 +3,9 @@ const router = express.Router();
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const User = require('../models/User');
+const { protect, authorize } = require('../middleware/auth');
+const { adjustProductStock } = require('../utils/inventory');
+const { calculateCartTotals, getStoreSettings } = require('../utils/pricing');
 
 // Helper to format backend Mongo order to frontend object
 const formatOrder = (order) => ({
@@ -31,29 +34,63 @@ const formatOrder = (order) => ({
   packageDimensions: order.packageDimensions || '25x20x3',
 });
 
-// GET /api/orders - Get all orders (for Admin Orders page)
-router.get('/', async (req, res, next) => {
+const paymentRouter = require('./paymentRoutes');
+const reconcileRazorpayOrder = (order) => paymentRouter.reconcileRazorpayOrder ? paymentRouter.reconcileRazorpayOrder(order) : order;
+
+// GET /api/orders - Get all orders (Admin only)
+router.get('/', protect, authorize('admin'), async (req, res, next) => {
   try {
     const orders = await Order.find().sort({ createdAt: -1 });
+
+    // Auto-reconcile pending Razorpay orders with Razorpay API
+    const reconciled = await Promise.all(
+      orders.map(async (order) => {
+        if (order.paymentStatus === 'Pending' && order.razorpayOrderId) {
+          return await reconcileRazorpayOrder(order);
+        }
+        return order;
+      })
+    );
+
     res.status(200).json({
       success: true,
-      count: orders.length,
-      data: orders.map(formatOrder),
+      count: reconciled.length,
+      data: reconciled.map(formatOrder),
     });
   } catch (error) {
     next(error);
   }
 });
 
-// GET /api/orders/user/:email - Get orders by user email
-router.get('/user/:email', async (req, res, next) => {
+// GET /api/orders/user/:email - Get orders by user email (Owner or Admin only)
+router.get('/user/:email', protect, async (req, res, next) => {
   try {
-    const email = req.params.email.toLowerCase();
-    const orders = await Order.find({ email }).sort({ createdAt: -1 });
+    const requestedEmail = req.params.email.toLowerCase().trim();
+
+    // Enforce authorization: user can only query their own orders unless they are an admin
+    if (req.user.role !== 'admin' && req.user.email.toLowerCase() !== requestedEmail) {
+      return res.status(403).json({
+        success: false,
+        error: 'Not authorized to view another customer\'s orders',
+      });
+    }
+
+    const orders = await Order.find({ email: requestedEmail }).sort({ createdAt: -1 });
+
+    // Auto-reconcile pending Razorpay orders with Razorpay API
+    const reconciled = await Promise.all(
+      orders.map(async (order) => {
+        if (order.paymentStatus === 'Pending' && order.razorpayOrderId) {
+          return await reconcileRazorpayOrder(order);
+        }
+        return order;
+      })
+    );
+
     res.status(200).json({
       success: true,
-      count: orders.length,
-      data: orders.map(formatOrder),
+      count: reconciled.length,
+      data: reconciled.map(formatOrder),
     });
   } catch (error) {
     next(error);
@@ -77,6 +114,11 @@ router.get('/:id', async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
+    // Auto-reconcile with Razorpay API if still pending
+    if (order.paymentStatus === 'Pending' && order.razorpayOrderId) {
+      order = await reconcileRazorpayOrder(order);
+    }
+
     res.status(200).json({
       success: true,
       data: formatOrder(order),
@@ -86,9 +128,12 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-const { adjustProductStock } = require('../utils/inventory');
-
-// POST /api/orders - Create a new order (or confirm existing pending order)
+// POST /api/orders - Create or confirm an order
+// SECURITY ENFORCEMENTS:
+// 1. For Razorpay payments, rejects any direct client attempt to create or mark orders as 'Paid'
+//    unless already cryptographically verified via POST /api/payment/verify or webhook.
+// 2. For COD payments, calculates all prices authoritatively on the server, rejects invalid items or stock,
+//    and enforces paymentStatus: 'Pending'.
 router.post('/', async (req, res, next) => {
   try {
     const {
@@ -98,20 +143,13 @@ router.post('/', async (req, res, next) => {
       phone,
       shippingAddress,
       items,
-      subtotal,
-      shippingFee,
-      discountAmount,
-      totalAmount,
+      shippingMethod,
+      couponCode,
       paymentMethod,
       paymentStatus,
-      orderStatus,
-      date,
-      timeline,
       razorpayOrderId,
       razorpayPaymentId,
     } = req.body;
-
-    const orderId = id || `#JJ${Math.floor(1000 + Math.random() * 9000)}`;
 
     const normalizedEmail = (email || '').trim().toLowerCase();
     if (!normalizedEmail) {
@@ -121,7 +159,7 @@ router.post('/', async (req, res, next) => {
       });
     }
 
-    // Enforce that customers must have an account to buy
+    // Require registered user account
     const registeredUser = await User.findOne({ email: normalizedEmail });
     if (!registeredUser) {
       return res.status(401).json({
@@ -130,80 +168,123 @@ router.post('/', async (req, res, next) => {
       });
     }
 
-    // Check if pending order already exists (from pre-creation at checkout)
-    const existingOrder = await Order.findOne({
-      $or: [{ orderId }, { orderId: orderId.replace(/^#/, '') }, { razorpayOrderId: razorpayOrderId || '__none__' }],
-    });
+    const orderId = id || `#JJ${Math.floor(1000 + Math.random() * 9000)}`;
+    const isRazorpay = paymentMethod === 'Razorpay';
 
-    if (existingOrder) {
-      existingOrder.paymentStatus = paymentStatus || 'Paid';
-      existingOrder.orderStatus = orderStatus || 'Confirmed';
-      if (razorpayPaymentId) existingOrder.razorpayPaymentId = razorpayPaymentId;
-      if (razorpayOrderId) existingOrder.razorpayOrderId = razorpayOrderId;
+    // 1. RAZORPAY PAYMENT FLOW
+    if (isRazorpay) {
+      // Find the pre-created order from /api/payment/create-order
+      const searchConditions = [{ orderId }, { orderId: orderId.replace(/^#/, '') }];
+      if (razorpayOrderId) searchConditions.push({ razorpayOrderId });
 
-      if (!existingOrder.stockDeducted) {
-        await adjustProductStock(existingOrder.items, -1);
-        existingOrder.stockDeducted = true;
+      const existingOrder = await Order.findOne({ $or: searchConditions });
+
+      if (existingOrder) {
+        // If already paid via verified signature/webhook, return the confirmed order
+        if (existingOrder.paymentStatus === 'Paid') {
+          return res.status(200).json({
+            success: true,
+            data: formatOrder(existingOrder),
+          });
+        }
+
+        // If the client claims the order is paid, verify that paymentId is supplied and signature was verified
+        if (paymentStatus === 'Paid') {
+          return res.status(400).json({
+            success: false,
+            message: 'Razorpay orders must be verified through POST /api/payment/verify before confirmation.',
+          });
+        }
+
+        return res.status(200).json({
+          success: true,
+          data: formatOrder(existingOrder),
+        });
       }
 
-      const note = paymentMethod === 'Razorpay'
-        ? `Payment verified via Razorpay (${razorpayPaymentId || 'Success'})`
-        : 'Order confirmed successfully';
+      // If client attempts to create an arbitrary Paid Razorpay order without pre-creation:
+      if (paymentStatus === 'Paid') {
+        return res.status(400).json({
+          success: false,
+          message: 'Direct order creation with status Paid is prohibited. Payment gateway verification required.',
+        });
+      }
+    }
 
-      existingOrder.timeline.push({
-        status: existingOrder.orderStatus,
-        timestamp: new Date().toISOString().replace('T', ' ').substring(0, 16),
-        note,
+    // 2. CASH ON DELIVERY (COD) FLOW
+    const isCOD = paymentMethod === 'Cash on Delivery' || paymentMethod === 'COD';
+    if (isCOD) {
+      const storeSettings = getStoreSettings();
+      if (!storeSettings.codEnabled) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cash on Delivery (COD) is currently disabled.',
+        });
+      }
+
+      // Authoritative pricing calculation
+      const breakdown = await calculateCartTotals({
+        items,
+        shippingMethod: shippingMethod || 'standard',
+        couponCode: couponCode || '',
       });
 
-      await existingOrder.save();
-      return res.status(200).json({
+      const newOrder = await Order.create({
+        orderId,
+        customerName: (customerName || registeredUser.name || 'Customer').trim(),
+        email: normalizedEmail,
+        phone: (phone || registeredUser.phone || '').trim(),
+        shippingAddress: shippingAddress || {},
+        items: breakdown.items.map((item) => ({
+          productId: item.productId,
+          name: item.name,
+          size: item.size,
+          version: item.version,
+          customName: item.customName,
+          customNumber: item.customNumber,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          image: item.image,
+        })),
+        subtotal: breakdown.subtotal,
+        shippingFee: breakdown.shippingFee,
+        discountAmount: breakdown.discountAmount,
+        totalAmount: breakdown.totalAmount,
+        paymentMethod: 'Cash on Delivery',
+        paymentStatus: 'Pending',
+        orderStatus: 'Confirmed',
+        date: new Date().toISOString().split('T')[0],
+        stockDeducted: true,
+        timeline: [
+          {
+            status: 'Confirmed',
+            timestamp: new Date().toISOString().replace('T', ' ').substring(0, 16),
+            note: 'COD order placed successfully. Payment to be collected upon delivery.',
+          },
+        ],
+      });
+
+      // Deduct stock atomically
+      await adjustProductStock(newOrder.items, -1);
+
+      return res.status(201).json({
         success: true,
-        data: formatOrder(existingOrder),
+        data: formatOrder(newOrder),
       });
     }
 
-    const newOrder = await Order.create({
-      orderId,
-      customerName,
-      email: email ? email.toLowerCase() : '',
-      phone: phone || '',
-      shippingAddress,
-      items,
-      subtotal,
-      shippingFee: shippingFee || 0,
-      discountAmount: discountAmount || 0,
-      totalAmount,
-      paymentMethod: paymentMethod || 'Credit Card',
-      paymentStatus: paymentStatus || 'Paid',
-      orderStatus: orderStatus || 'Confirmed',
-      date: date || new Date().toISOString().split('T')[0],
-      razorpayOrderId: razorpayOrderId || '',
-      razorpayPaymentId: razorpayPaymentId || '',
-      stockDeducted: true,
-      timeline: timeline || [
-        {
-          status: 'Confirmed',
-          timestamp: new Date().toISOString().replace('T', ' ').substring(0, 16),
-          note: 'Order placed & payment verified successfully',
-        },
-      ],
-    });
-
-    // Deduct stock for all ordered products
-    await adjustProductStock(items, -1);
-
-    res.status(201).json({
-      success: true,
-      data: formatOrder(newOrder),
+    // Any other payment method must not default to 'Paid'
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid payment method or payment verification required.',
     });
   } catch (error) {
     next(error);
   }
 });
 
-// PATCH /api/orders/:id/status - Update order status
-router.patch('/:id/status', async (req, res, next) => {
+// PATCH /api/orders/:id/status - Update order status (Admin only)
+router.patch('/:id/status', protect, authorize('admin'), async (req, res, next) => {
   try {
     const id = req.params.id;
     const { orderStatus, paymentStatus } = req.body;
@@ -259,8 +340,8 @@ router.patch('/:id/status', async (req, res, next) => {
   }
 });
 
-// PATCH /api/orders/:id - General update of order details (Customer info, Shipping address, etc.)
-router.patch('/:id', async (req, res, next) => {
+// PATCH /api/orders/:id - General update of order details (Admin only)
+router.patch('/:id', protect, authorize('admin'), async (req, res, next) => {
   try {
     const id = req.params.id;
     const formattedSearch = id.startsWith('#') ? id : `#${id}`;
@@ -292,7 +373,7 @@ router.patch('/:id', async (req, res, next) => {
     if (phone !== undefined) order.phone = phone.trim();
     if (shippingAddress !== undefined) {
       order.shippingAddress = {
-        ...(order.shippingAddress ? order.shippingAddress.toObject ? order.shippingAddress.toObject() : order.shippingAddress : {}),
+        ...(order.shippingAddress ? (order.shippingAddress.toObject ? order.shippingAddress.toObject() : order.shippingAddress) : {}),
         ...shippingAddress,
       };
     }
@@ -321,8 +402,8 @@ router.patch('/:id', async (req, res, next) => {
   }
 });
 
-// POST /api/orders/bulk-delete - Delete multiple orders
-router.post('/bulk-delete', async (req, res, next) => {
+// POST /api/orders/bulk-delete - Delete multiple orders (Admin only)
+router.post('/bulk-delete', protect, authorize('admin'), async (req, res, next) => {
   try {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) {
@@ -330,7 +411,7 @@ router.post('/bulk-delete', async (req, res, next) => {
     }
 
     const formattedIds = [];
-    ids.forEach(id => {
+    ids.forEach((id) => {
       if (typeof id === 'string') {
         formattedIds.push(id);
         if (id.startsWith('#')) {
@@ -341,13 +422,13 @@ router.post('/bulk-delete', async (req, res, next) => {
       }
     });
 
-    const objectIds = ids.filter(id => typeof id === 'string' && id.match(/^[0-9a-fA-F]{24}$/));
+    const objectIds = ids.filter((id) => typeof id === 'string' && id.match(/^[0-9a-fA-F]{24}$/));
 
     const result = await Order.deleteMany({
       $or: [
         { orderId: { $in: formattedIds } },
-        { _id: { $in: objectIds } }
-      ]
+        { _id: { $in: objectIds } },
+      ],
     });
 
     res.status(200).json({
@@ -360,12 +441,12 @@ router.post('/bulk-delete', async (req, res, next) => {
   }
 });
 
-// DELETE /api/orders/:id - Delete an order by ID
-router.delete('/:id', async (req, res, next) => {
+// DELETE /api/orders/:id - Delete an order by ID (Admin only)
+router.delete('/:id', protect, authorize('admin'), async (req, res, next) => {
   try {
     const id = req.params.id;
     const formattedSearch = id.startsWith('#') ? id : `#${id}`;
-    
+
     await Order.deleteMany({
       $or: [{ orderId: id }, { orderId: formattedSearch }],
     });
@@ -383,8 +464,8 @@ router.delete('/:id', async (req, res, next) => {
   }
 });
 
-// DELETE /api/orders - Delete all orders
-router.delete('/', async (req, res, next) => {
+// DELETE /api/orders - Delete all orders (Admin only)
+router.delete('/', protect, authorize('admin'), async (req, res, next) => {
   try {
     const result = await Order.deleteMany({});
     res.status(200).json({

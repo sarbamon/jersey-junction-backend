@@ -1,7 +1,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const { protect } = require('../middleware/auth');
+const { protect, authorize } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -234,8 +234,8 @@ router.get('/logout', protect, (req, res) => {
 
 // @route   GET /api/auth/users
 // @desc    Get all registered users for admin directory
-// @access  Public / Admin
-router.get('/users', async (req, res, next) => {
+// @access  Admin only
+router.get('/users', protect, authorize('admin'), async (req, res, next) => {
   try {
     const users = await User.find({ role: { $ne: 'admin' } }).select('-password').sort({ createdAt: -1 });
     res.status(200).json({
@@ -250,8 +250,8 @@ router.get('/users', async (req, res, next) => {
 
 // @route   PUT /api/auth/users/:id/ban
 // @desc    Ban or Unban customer account (Admin only)
-// @access  Public / Admin
-router.put('/users/:id/ban', async (req, res, next) => {
+// @access  Admin only
+router.put('/users/:id/ban', protect, authorize('admin'), async (req, res, next) => {
   try {
     const { isBanned, reason } = req.body;
     const user = await User.findById(req.params.id);
@@ -284,8 +284,8 @@ router.put('/users/:id/ban', async (req, res, next) => {
 
 // @route   PUT /api/auth/users/:id/reset-password
 // @desc    Admin manually reset customer password
-// @access  Public / Admin
-router.put('/users/:id/reset-password', async (req, res, next) => {
+// @access  Admin only
+router.put('/users/:id/reset-password', protect, authorize('admin'), async (req, res, next) => {
   try {
     const { newPassword } = req.body;
     if (!newPassword || newPassword.length < 6) {
