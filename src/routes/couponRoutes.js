@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Coupon = require('../models/Coupon');
-const { protect, authorize } = require('../middleware/auth');
+const { protect, authorizePermission } = require('../middleware/auth');
 
 // GET /api/coupons - List all coupons
 router.get('/', async (req, res, next) => {
@@ -115,8 +115,8 @@ router.post('/validate', async (req, res, next) => {
   }
 });
 
-// POST /api/coupons - Create coupon (Admin only)
-router.post('/', protect, authorize('admin'), async (req, res, next) => {
+// POST /api/coupons - Create coupon (Admin & permitted staff)
+router.post('/', protect, authorizePermission('coupons'), async (req, res, next) => {
   try {
     const { code, discountType, discountValue, minOrder, maxDiscount, expiryDate, usageLimit, status } = req.body;
     if (!code) {
@@ -160,8 +160,8 @@ router.post('/', protect, authorize('admin'), async (req, res, next) => {
   }
 });
 
-// PUT /api/coupons/:id - Update coupon (Admin only)
-router.put('/:id', protect, authorize('admin'), async (req, res, next) => {
+// PUT /api/coupons/:id - Update coupon (Admin & permitted staff)
+router.put('/:id', protect, authorizePermission('coupons'), async (req, res, next) => {
   try {
     const isObjectId = req.params.id && req.params.id.match(/^[0-9a-fA-F]{24}$/);
     const query = isObjectId ? { _id: req.params.id } : { code: req.params.id.toUpperCase() };
@@ -196,8 +196,8 @@ router.put('/:id', protect, authorize('admin'), async (req, res, next) => {
   }
 });
 
-// DELETE /api/coupons/:id - Delete coupon (Admin only)
-router.delete('/:id', protect, authorize('admin'), async (req, res, next) => {
+// DELETE /api/coupons/:id - Delete coupon (Admin & permitted staff)
+router.delete('/:id', protect, authorizePermission('coupons'), async (req, res, next) => {
   try {
     const isObjectId = req.params.id && req.params.id.match(/^[0-9a-fA-F]{24}$/);
     const query = isObjectId ? { _id: req.params.id } : { code: req.params.id.toUpperCase() };

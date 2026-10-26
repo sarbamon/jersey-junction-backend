@@ -95,6 +95,12 @@ router.post('/', async (req, res) => {
   try {
     invalidateCategoryCache();
     const { name, slug, tag, image, status } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, message: 'Category name is required' });
+    }
+    if (!image || !image.trim()) {
+      return res.status(400).json({ success: false, message: 'Category photo is compulsory. Please upload an image.' });
+    }
     const catSlug = slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const existing = await Category.findOne({ slug: catSlug });
     if (existing) {
@@ -104,10 +110,10 @@ router.post('/', async (req, res) => {
     const nextOrder = maxCat && typeof maxCat.order === 'number' ? maxCat.order + 1 : 0;
 
     const category = await Category.create({
-      name,
+      name: name.trim(),
       slug: catSlug,
       tag: tag || 'Sport Collection',
-      image: image || 'https://res.cloudinary.com/mcsohx4p/image/upload/v1792689801/jerseyjunction_uploads/q6fb9r25vwafcwkfhdca.jpg',
+      image: image.trim(),
       status: status || 'Active',
       order: nextOrder,
     });
@@ -128,6 +134,9 @@ router.put('/:id', async (req, res) => {
     }
     if (!category) {
       return res.status(404).json({ success: false, message: 'Category not found' });
+    }
+    if (req.body.image !== undefined && (!req.body.image || !req.body.image.trim())) {
+      return res.status(400).json({ success: false, message: 'Category photo is compulsory and cannot be empty.' });
     }
     category = await Category.findByIdAndUpdate(category._id, req.body, { new: true, runValidators: true });
     res.json({ success: true, data: category });

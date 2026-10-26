@@ -34,6 +34,8 @@ const sendTokenResponse = (user, statusCode, res) => {
         email: user.email,
         role: user.role,
         phone: user.phone,
+        permissions: Array.isArray(user.permissions) ? user.permissions : [],
+        employeeTitle: user.employeeTitle || (user.role === 'admin' ? 'Boss / Administrator' : 'Staff Member'),
       },
     });
 };
@@ -348,6 +350,24 @@ router.post('/reset-password', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// @route   GET /api/auth/me
+// @desc    Get currently logged in user profile & permissions
+// @access  Private
+router.get('/me', protect, async (req, res) => {
+  res.status(200).json({
+    success: true,
+    user: {
+      id: req.user._id,
+      name: req.user.name,
+      email: req.user.email,
+      role: req.user.role,
+      phone: req.user.phone,
+      permissions: Array.isArray(req.user.permissions) ? req.user.permissions : [],
+      employeeTitle: req.user.employeeTitle || (req.user.role === 'admin' ? 'Boss / Administrator' : 'Staff Member'),
+    },
+  });
 });
 
 module.exports = router;

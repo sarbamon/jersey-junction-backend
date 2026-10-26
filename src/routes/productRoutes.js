@@ -1,7 +1,7 @@
 const express = require('express');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
-const { protect, authorize } = require('../middleware/auth');
+const { protect, authorize, authorizePermission } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -265,11 +265,24 @@ router.get('/:id', async (req, res, next) => {
 
 // @route   POST /api/products
 // @desc    Create new product
-// @access  Private (Admin)
-router.post('/', protect, authorize('admin'), async (req, res, next) => {
+// @access  Private (Admin or Products Employee)
+router.post('/', protect, authorizePermission('products'), async (req, res, next) => {
   try {
     invalidateProductCache();
     const productData = { ...req.body };
+    const primaryImg = (productData.image && productData.image.trim()) || 
+      (Array.isArray(productData.images) && productData.images.find(img => img && img.trim()));
+    if (!primaryImg) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product photo is compulsory. Please upload at least one photo.',
+      });
+    }
+    productData.image = primaryImg;
+    if (!Array.isArray(productData.images) || productData.images.length === 0) {
+      productData.images = [primaryImg];
+    }
+
     if (!productData.slug) {
       productData.slug = (productData.name || 'product')
         .toLowerCase()
@@ -340,6 +353,19 @@ const updateProductHandler = async (req, res, next) => {
     const query = isObjectId ? { _id: req.params.id } : { slug: req.params.id };
 
     const updateData = { ...req.body };
+    if (updateData.image !== undefined || updateData.images !== undefined) {
+      const remainingImg = (updateData.image && updateData.image.trim()) ||
+        (Array.isArray(updateData.images) && updateData.images.find(img => img && img.trim()));
+      if (updateData.image === '' && (!updateData.images || updateData.images.length === 0)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Product photo is compulsory. Cannot remove all product photos.',
+        });
+      }
+      if (remainingImg) {
+        updateData.image = remainingImg;
+      }
+    }
     if (updateData.category) {
       const catLower = updateData.category.toLowerCase().trim();
       if (catLower.includes('fan')) {
@@ -398,13 +424,13 @@ const updateProductHandler = async (req, res, next) => {
   }
 };
 
-router.patch('/:id', protect, authorize('admin'), updateProductHandler);
-router.put('/:id', protect, authorize('admin'), updateProductHandler);
+router.patch('/:id', protect, authorizePermission('products'), updateProductHandler);
+router.put('/:id', protect, authorizePermission('products'), updateProductHandler);
 
 // @route   POST /api/products/bulk-delete
 // @desc    Bulk delete products by IDs or slugs
-// @access  Admin
-router.post('/bulk-delete', protect, authorize('admin'), async (req, res, next) => {
+// @access  Admin or Products Employee
+router.post('/bulk-delete', protect, authorizePermission('products'), async (req, res, next) => {
   try {
     invalidateProductCache();
     const { ids } = req.body;
@@ -434,8 +460,8 @@ router.post('/bulk-delete', protect, authorize('admin'), async (req, res, next) 
 
 // @route   DELETE /api/products/:id
 // @desc    Delete single product
-// @access  Admin
-router.delete('/:id', protect, authorize('admin'), async (req, res, next) => {
+// @access  Admin or Products Employee
+router.delete('/:id', protect, authorizePermission('products'), async (req, res, next) => {
   try {
     invalidateProductCache();
     const isObjectId = req.params.id.match(/^[0-9a-fA-F]{24}$/);

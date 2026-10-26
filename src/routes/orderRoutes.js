@@ -3,7 +3,7 @@ const router = express.Router();
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const User = require('../models/User');
-const { protect, authorize } = require('../middleware/auth');
+const { protect, authorize, authorizePermission } = require('../middleware/auth');
 const { adjustProductStock } = require('../utils/inventory');
 const { calculateCartTotals, getStoreSettings } = require('../utils/pricing');
 
@@ -37,8 +37,8 @@ const formatOrder = (order) => ({
 const paymentRouter = require('./paymentRoutes');
 const reconcileRazorpayOrder = (order) => paymentRouter.reconcileRazorpayOrder ? paymentRouter.reconcileRazorpayOrder(order) : order;
 
-// GET /api/orders - Get all orders (Admin only)
-router.get('/', protect, authorize('admin'), async (req, res, next) => {
+// GET /api/orders - Get all orders (Admin or Orders Employee)
+router.get('/', protect, authorizePermission('orders'), async (req, res, next) => {
   try {
     const orders = await Order.find().sort({ createdAt: -1 });
 
@@ -340,8 +340,8 @@ router.patch('/:id/status', protect, authorize('admin'), async (req, res, next) 
   }
 });
 
-// PATCH /api/orders/:id - General update of order details (Admin only)
-router.patch('/:id', protect, authorize('admin'), async (req, res, next) => {
+// PATCH /api/orders/:id - General update of order details (Admin or Orders Employee)
+router.patch('/:id', protect, authorizePermission('orders'), async (req, res, next) => {
   try {
     const id = req.params.id;
     const formattedSearch = id.startsWith('#') ? id : `#${id}`;
@@ -402,8 +402,8 @@ router.patch('/:id', protect, authorize('admin'), async (req, res, next) => {
   }
 });
 
-// POST /api/orders/bulk-delete - Delete multiple orders (Admin only)
-router.post('/bulk-delete', protect, authorize('admin'), async (req, res, next) => {
+// POST /api/orders/bulk-delete - Delete multiple orders (Admin or Orders Employee)
+router.post('/bulk-delete', protect, authorizePermission('orders'), async (req, res, next) => {
   try {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) {
@@ -441,8 +441,8 @@ router.post('/bulk-delete', protect, authorize('admin'), async (req, res, next) 
   }
 });
 
-// DELETE /api/orders/:id - Delete an order by ID (Admin only)
-router.delete('/:id', protect, authorize('admin'), async (req, res, next) => {
+// DELETE /api/orders/:id - Delete an order by ID (Admin or Orders Employee)
+router.delete('/:id', protect, authorizePermission('orders'), async (req, res, next) => {
   try {
     const id = req.params.id;
     const formattedSearch = id.startsWith('#') ? id : `#${id}`;

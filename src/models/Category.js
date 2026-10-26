@@ -19,7 +19,8 @@ const categorySchema = new mongoose.Schema(
     },
     image: {
       type: String,
-      default: 'https://res.cloudinary.com/mcsohx4p/image/upload/v1792689801/jerseyjunction_uploads/q6fb9r25vwafcwkfhdca.jpg',
+      required: [true, 'Please add category photo'],
+      default: '/placeholder-category.svg',
     },
     status: {
       type: String,

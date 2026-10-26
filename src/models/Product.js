@@ -132,8 +132,14 @@ const productSchema = new mongoose.Schema(
     details: [String],
     availablePatches: [patchOptionSchema],
     tags: [String],
-    image: String,
-    images: [String],
+    image: {
+      type: String,
+      default: '/placeholder-jersey.svg',
+    },
+    images: {
+      type: [String],
+      default: [],
+    },
     createdDate: {
       type: String,
       default: () => new Date().toISOString().split('T')[0],
