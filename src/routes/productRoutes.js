@@ -275,7 +275,7 @@ router.post('/', protect, authorizePermission('products'), async (req, res, next
     if (!primaryImg) {
       return res.status(400).json({
         success: false,
-        error: 'Product photo is compulsory. Please upload at least one photo.',
+        error: 'Product photo is required. Please upload at least one photo.',
       });
     }
     productData.image = primaryImg;
@@ -386,7 +386,7 @@ const updateProductHandler = async (req, res, next) => {
       if (updateData.image === '' && (!updateData.images || updateData.images.length === 0)) {
         return res.status(400).json({
           success: false,
-          error: 'Product photo is compulsory. Cannot remove all product photos.',
+          error: 'Product photo is required. Cannot remove all product photos.',
         });
       }
       if (remainingImg) {
