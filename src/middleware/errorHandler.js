@@ -14,7 +14,9 @@ const errorHandler = (err, req, res, next) => {
 
   // Mongoose duplicate key
   if (err.code === 11000) {
-    const message = 'Duplicate field value entered';
+    const field = err.keyValue ? Object.keys(err.keyValue).join(', ') : 'field';
+    const val = err.keyValue ? Object.values(err.keyValue).join(', ') : '';
+    const message = `Duplicate ${field}: "${val}" already exists. Please use a unique value.`;
     return res.status(400).json({ success: false, error: message });
   }
 

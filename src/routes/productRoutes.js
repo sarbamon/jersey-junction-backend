@@ -283,12 +283,19 @@ router.post('/', protect, authorizePermission('products'), async (req, res, next
       productData.images = [primaryImg];
     }
 
-    if (!productData.slug) {
-      productData.slug = (productData.name || 'product')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/(^-|-$)+/g, '') + '-' + Date.now();
+    let baseSlug = (productData.slug || productData.name || 'product')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)+/g, '');
+    if (!baseSlug) baseSlug = 'product';
+
+    let finalSlug = baseSlug;
+    let counter = 1;
+    while (await Product.exists({ slug: finalSlug })) {
+      finalSlug = `${baseSlug}-${Date.now().toString().slice(-4)}-${counter}`;
+      counter++;
     }
+    productData.slug = finalSlug;
 
     if (productData.category) {
       const catLower = productData.category.toLowerCase().trim();
