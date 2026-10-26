@@ -290,9 +290,9 @@ router.post('/', protect, authorizePermission('products'), async (req, res, next
     if (!baseSlug) baseSlug = 'product';
 
     let finalSlug = baseSlug;
-    let counter = 1;
+    let counter = 2;
     while (await Product.exists({ slug: finalSlug })) {
-      finalSlug = `${baseSlug}-${Date.now().toString().slice(-4)}-${counter}`;
+      finalSlug = `${baseSlug}-${counter}`;
       counter++;
     }
     productData.slug = finalSlug;
@@ -360,6 +360,26 @@ const updateProductHandler = async (req, res, next) => {
     const query = isObjectId ? { _id: req.params.id } : { slug: req.params.id };
 
     const updateData = { ...req.body };
+
+    if (updateData.slug || updateData.name) {
+      const existingProduct = await Product.findOne(query);
+      if (existingProduct) {
+        let baseSlug = (updateData.slug || updateData.name || existingProduct.slug)
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/(^-|-$)+/g, '');
+        if (!baseSlug) baseSlug = 'product';
+
+        let finalSlug = baseSlug;
+        let counter = 2;
+        while (await Product.exists({ slug: finalSlug, _id: { $ne: existingProduct._id } })) {
+          finalSlug = `${baseSlug}-${counter}`;
+          counter++;
+        }
+        updateData.slug = finalSlug;
+      }
+    }
+
     if (updateData.image !== undefined || updateData.images !== undefined) {
       const remainingImg = (updateData.image && updateData.image.trim()) ||
         (Array.isArray(updateData.images) && updateData.images.find(img => img && img.trim()));
