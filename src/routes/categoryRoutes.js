@@ -7,31 +7,18 @@ const DEFAULT_CATEGORIES = [
   { name: 'Fan Version', slug: 'fan-version', tag: 'Standard Fit', image: 'https://res.cloudinary.com/mcsohx4p/image/upload/v1792689804/jerseyjunction_uploads/tu9yhwz7tuelbg3rmp5d.jpg', status: 'Active' },
 ];
 
-let hasSeeded = false;
-async function seedCategoriesIfEmpty() {
-  if (hasSeeded) return;
-  try {
-    const count = await Category.countDocuments();
-    if (count === 0) {
-      await Category.insertMany(DEFAULT_CATEGORIES);
-      console.log('Seeded default admin categories in MongoDB.');
-    }
-    hasSeeded = true;
-  } catch (err) {
-    console.error('Error seeding categories:', err.message);
-  }
-}
-
-// In-memory cache for ultra-fast 0ms responses
+// In-memory cache for ultra-fast responses
 let cachedActiveCategories = null;
 let cachedActiveTime = 0;
 let cachedAdminCategories = null;
 let cachedAdminTime = 0;
-const CACHE_TTL = 60 * 1000; // 60 seconds
+const CACHE_TTL = 30 * 1000; // 30 seconds
 
 function invalidateCategoryCache() {
   cachedActiveCategories = null;
   cachedAdminCategories = null;
+  cachedActiveTime = 0;
+  cachedAdminTime = 0;
 }
 
 // GET active categories for public storefront
@@ -40,7 +27,6 @@ router.get('/', async (req, res) => {
     if (cachedActiveCategories && (Date.now() - cachedActiveTime < CACHE_TTL)) {
       return res.json({ success: true, count: cachedActiveCategories.length, data: cachedActiveCategories });
     }
-    await seedCategoriesIfEmpty();
     const categories = await Category.find({ status: 'Active' }).sort({ order: 1, createdAt: 1 }).lean();
     cachedActiveCategories = categories;
     cachedActiveTime = Date.now();
@@ -56,7 +42,6 @@ router.get('/admin/all', async (req, res) => {
     if (cachedAdminCategories && (Date.now() - cachedAdminTime < CACHE_TTL)) {
       return res.json({ success: true, count: cachedAdminCategories.length, data: cachedAdminCategories });
     }
-    await seedCategoriesIfEmpty();
     const categories = await Category.find().sort({ order: 1, createdAt: 1 }).lean();
     cachedAdminCategories = categories;
     cachedAdminTime = Date.now();
@@ -155,14 +140,19 @@ router.post('/bulk-delete', async (req, res) => {
     }
 
     const objectIds = ids.filter(id => typeof id === 'string' && id.match(/^[0-9a-fA-F]{24}$/));
+    const rawStrings = ids.map(id => decodeURIComponent(String(id)));
+    const slugs = rawStrings.map(s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
+
     const query = {
       $or: [
         { _id: { $in: objectIds } },
-        { slug: { $in: ids } }
+        { slug: { $in: ids.concat(rawStrings, slugs) } },
+        { name: { $in: rawStrings } }
       ]
     };
 
     const result = await Category.deleteMany(query);
+    invalidateCategoryCache();
     res.json({
       success: true,
       count: result.deletedCount,
@@ -177,15 +167,28 @@ router.post('/bulk-delete', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     invalidateCategoryCache();
-    const isObjectId = req.params.id && req.params.id.match(/^[0-9a-fA-F]{24}$/);
-    let category = isObjectId ? await Category.findById(req.params.id) : null;
+    const rawId = req.params.id;
+    const isObjectId = rawId && rawId.match(/^[0-9a-fA-F]{24}$/);
+    let category = isObjectId ? await Category.findById(rawId) : null;
     if (!category) {
-      category = await Category.findOne({ slug: req.params.id });
+      const decoded = decodeURIComponent(rawId);
+      const slugCandidate = decoded.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      category = await Category.findOne({
+        $or: [
+          { slug: rawId },
+          { slug: decoded },
+          { slug: slugCandidate },
+          { name: decoded },
+          { name: new RegExp(`^${decoded.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+        ],
+      });
     }
     if (!category) {
+      invalidateCategoryCache();
       return res.status(200).json({ success: true, message: 'Category already deleted or not found' });
     }
     await Category.findByIdAndDelete(category._id);
+    invalidateCategoryCache();
     res.json({ success: true, message: 'Category deleted successfully' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
