@@ -133,7 +133,13 @@ router.put('/:id', async (req, res, next) => {
     }
 
     // Optional password reset by Boss
-    if (password && password.trim().length >= 6) {
+    if (password && password.trim().length > 0) {
+      if (password.trim().length < 6) {
+        return res.status(400).json({
+          success: false,
+          error: 'New password must be at least 6 characters long',
+        });
+      }
       employee.password = password.trim();
     }
 
