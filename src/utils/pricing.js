@@ -19,6 +19,7 @@ const getStoreSettings = () => {
     standardShippingCharge: 0,
     freeShippingThreshold: 100000,
     codEnabled: false,
+    customJerseyPrice: 150,
   };
 };
 
@@ -39,8 +40,12 @@ const calculateCartTotals = async ({ items, shippingMethod = 'standard', couponC
     throw error;
   }
 
+  const settings = getStoreSettings();
   const verifiedItems = [];
   let subtotal = 0;
+  let baseJerseysTotal = 0;
+  let customPrintingTotal = 0;
+  let patchesTotal = 0;
 
   for (const item of items) {
     if (!item) continue;
@@ -135,10 +140,14 @@ const calculateCartTotals = async ({ items, shippingMethod = 'standard', couponC
     const isPlayerVersion = /player/i.test(versionStr);
     const versionExtra = isPlayerVersion ? 150 : 0;
 
-    // 3. Customization surcharge: +₹100 for custom name/number
+    // 3. Customization surcharge: dynamic custom jersey price
     const customNameStr = String(item.customName || '').trim();
     const customNumberStr = String(item.customNumber || '').trim();
-    const printExtra = customNameStr.length > 0 ? 100 : 0;
+    const isCustomized = customNameStr.length > 0 || customNumberStr.length > 0;
+    const effectiveCustomPrice = (typeof product.customizationPrice === 'number' && product.customizationPrice >= 0)
+      ? product.customizationPrice
+      : (typeof settings.customJerseyPrice === 'number' && settings.customJerseyPrice >= 0 ? settings.customJerseyPrice : 150);
+    const printExtra = isCustomized ? effectiveCustomPrice : 0;
 
     // 4. Patches surcharge (if any selected patches)
     let patchesPrice = 0;
@@ -169,6 +178,10 @@ const calculateCartTotals = async ({ items, shippingMethod = 'standard', couponC
     const itemSubtotal = unitPrice * quantity;
     subtotal += itemSubtotal;
 
+    baseJerseysTotal += (basePrice + versionExtra) * quantity;
+    customPrintingTotal += printExtra * quantity;
+    patchesTotal += patchesPrice * quantity;
+
     verifiedItems.push({
       productId: product._id.toString(),
       slug: product.slug,
@@ -179,6 +192,9 @@ const calculateCartTotals = async ({ items, shippingMethod = 'standard', couponC
       customNumber: customNumberStr,
       quantity,
       unitPrice,
+      basePrice: basePrice + versionExtra,
+      customFee: printExtra,
+      patchesPrice,
       subtotal: itemSubtotal,
       image: product.image || (Array.isArray(product.images) && product.images[0]) || '',
     });
@@ -260,6 +276,9 @@ const calculateCartTotals = async ({ items, shippingMethod = 'standard', couponC
   const amountInPaise = Math.round(totalAmount * 100);
 
   return {
+    baseJerseysTotal,
+    customPrintingTotal,
+    patchesTotal,
     subtotal,
     discountAmount,
     shippingFee,

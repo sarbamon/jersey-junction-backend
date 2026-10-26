@@ -95,6 +95,10 @@ const productSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    customizationPrice: {
+      type: Number,
+      default: 150,
+    },
     status: {
       type: String,
       enum: ['Active', 'Draft', 'Out of Stock'],

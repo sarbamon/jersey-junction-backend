@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS = {
   freeShippingThreshold: 999,
   codEnabled: true,
   razorpayEnabled: true,
+  customJerseyPrice: 150,
 };
 
 function readSettings() {
@@ -75,5 +76,6 @@ const updateHandler = (req, res) => {
 
 router.post('/', updateHandler);
 router.put('/', updateHandler);
+router.readSettings = readSettings;
 
 module.exports = router;

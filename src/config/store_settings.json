@@ -8,5 +8,6 @@
   "codEnabled": false,
   "razorpayEnabled": true,
   "expressShippingCharge": 100,
-  "standardShippingCharge": 0
+  "standardShippingCharge": 0,
+  "customJerseyPrice": 150
 }
