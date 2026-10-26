@@ -255,7 +255,6 @@ const calculateCartTotals = async ({ items, shippingMethod = 'standard', couponC
   }
 
   // Authoritative Shipping Calculation
-  const settings = getStoreSettings();
   const normalizedMethod = String(shippingMethod || 'standard').toLowerCase();
   let shippingFee = 0;
 
