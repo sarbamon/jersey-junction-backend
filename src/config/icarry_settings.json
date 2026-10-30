@@ -2,12 +2,12 @@
   "apiToken": "lklUWZZEqQkF5iLiwuNNmKmrsuwLkfbJEapyPSVfCZ3iwf6JrStcb2HrYQfujWeVDH0HQhgkt6tdBc6yugBDtzZdOl08NrJlknuTEm0r3ZCGRNeJTwuxyMr1DxnezzobowP5xAtSaOhORQgpVTtzBgksMg2NIe6wdL4Mp4xd5yVKMb52CFwNdU7eDa1PYMvkruCP5dYeuWRpYOFCWgyNHzymNoXsI72oTzBEBuz3R6McWRVa0VH87kfTXiorHtaY",
   "apiKey": "lklUWZZEqQkF5iLiwuNNmKmrsuwLkfbJEapyPSVfCZ3iwf6JrStcb2HrYQfujWeVDH0HQhgkt6tdBc6yugBDtzZdOl08NrJlknuTEm0r3ZCGRNeJTwuxyMr1DxnezzobowP5xAtSaOhORQgpVTtzBgksMg2NIe6wdL4Mp4xd5yVKMb52CFwNdU7eDa1PYMvkruCP5dYeuWRpYOFCWgyNHzymNoXsI72oTzBEBuz3R6McWRVa0VH87kfTXiorHtaY",
   "apiUsername": "ela16040",
-  "pickupAddressId": "34272",
+  "pickupAddressId": "103215",
   "isLiveMode": true,
   "defaultWeight": 0.4,
   "defaultLength": 25,
   "defaultBreadth": 20,
   "defaultHeight": 3,
-  "senderName": "Main Hub",
-  "senderPincode": "782462"
+  "senderName": "SUFI",
+  "senderPincode": "400052"
 }

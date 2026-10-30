@@ -1,11 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const Order = require('../models/Order');
+const OrderOtp = require('../models/OrderOtp');
 const Product = require('../models/Product');
 const User = require('../models/User');
 const { protect, authorize, authorizePermission } = require('../middleware/auth');
 const { adjustProductStock } = require('../utils/inventory');
 const { calculateCartTotals, getStoreSettings } = require('../utils/pricing');
+const { sendOrderConfirmationOtp, sendOrderConfirmationReceipt } = require('../utils/emailService');
 
 // Helper to format backend Mongo order to frontend object
 const formatOrder = (order) => ({
@@ -128,12 +130,98 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
+// POST /api/orders/send-otp - Generate and send 6-digit order confirmation OTP via Gmail
+router.post('/send-otp', async (req, res, next) => {
+  try {
+    const { email, customerName, orderId, totalAmount } = req.body;
+    const normalizedEmail = (email || '').trim().toLowerCase();
+
+    if (!normalizedEmail || !normalizedEmail.includes('@')) {
+      return res.status(400).json({
+        success: false,
+        message: 'A valid email address is required to receive the OTP.',
+      });
+    }
+
+    // Generate cryptographically secure 6-digit numeric OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Replace any previous OTP for this customer
+    await OrderOtp.deleteMany({ email: normalizedEmail });
+
+    await OrderOtp.create({
+      email: normalizedEmail,
+      otp,
+      purpose: 'order_confirmation',
+      verified: false,
+    });
+
+    // Send the email via Gmail SMTP (or log in terminal if in local dev)
+    const mailResult = await sendOrderConfirmationOtp({
+      email: normalizedEmail,
+      otp,
+      customerName: (customerName || normalizedEmail.split('@')[0]).trim(),
+      orderId,
+      totalAmount,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: mailResult.simulated
+        ? `[Dev Mode] Confirmation code generated: ${otp}. Add EMAIL_USER & EMAIL_PASS in .env to send real Gmail.`
+        : `Confirmation code has been sent to ${normalizedEmail}.`,
+      email: normalizedEmail,
+      simulated: Boolean(mailResult.simulated),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/orders/verify-otp - Verify confirmation OTP entered by customer
+router.post('/verify-otp', async (req, res, next) => {
+  try {
+    const { email, otp } = req.body;
+    const normalizedEmail = (email || '').trim().toLowerCase();
+    const cleanOtp = (otp || '').toString().trim();
+
+    if (!normalizedEmail || !cleanOtp) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and 6-digit OTP code are required.',
+      });
+    }
+
+    const record = await OrderOtp.findOne({
+      email: normalizedEmail,
+      otp: cleanOtp,
+    });
+
+    if (!record) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired OTP code. Please check your Gmail or request a new one.',
+      });
+    }
+
+    record.verified = true;
+    await record.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'OTP verified successfully.',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // POST /api/orders - Create or confirm an order
 // SECURITY ENFORCEMENTS:
 // 1. For Razorpay payments, rejects any direct client attempt to create or mark orders as 'Paid'
 //    unless already cryptographically verified via POST /api/payment/verify or webhook.
-// 2. For COD payments, calculates all prices authoritatively on the server, rejects invalid items or stock,
-//    and enforces paymentStatus: 'Pending'.
+// 2. For COD payments, calculates all prices authoritatively on the server, verifies email OTP,
+//    rejects invalid items or stock, and enforces paymentStatus: 'Pending'.
 router.post('/', async (req, res, next) => {
   try {
     const {
@@ -222,6 +310,38 @@ router.post('/', async (req, res, next) => {
         });
       }
 
+      // Enforce Email OTP Verification for COD Order Confirmation
+      const cleanOtp = (req.body.otp || '').toString().trim();
+      let otpVerified = false;
+
+      if (cleanOtp) {
+        const otpRecord = await OrderOtp.findOne({
+          email: normalizedEmail,
+          otp: cleanOtp,
+        });
+        if (otpRecord) {
+          otpVerified = true;
+          await OrderOtp.deleteMany({ email: normalizedEmail });
+        }
+      } else {
+        const verifiedRecord = await OrderOtp.findOne({
+          email: normalizedEmail,
+          verified: true,
+        });
+        if (verifiedRecord) {
+          otpVerified = true;
+          await OrderOtp.deleteMany({ email: normalizedEmail });
+        }
+      }
+
+      if (!otpVerified) {
+        return res.status(400).json({
+          success: false,
+          requireOtp: true,
+          message: 'Email confirmation is required. Please enter the 6-digit OTP code sent to your Gmail.',
+        });
+      }
+
       // Authoritative pricing calculation
       const breakdown = await calculateCartTotals({
         items,
@@ -259,13 +379,18 @@ router.post('/', async (req, res, next) => {
           {
             status: 'Confirmed',
             timestamp: new Date().toISOString().replace('T', ' ').substring(0, 16),
-            note: 'COD order placed successfully. Payment to be collected upon delivery.',
+            note: 'COD order confirmed via Gmail OTP. Payment to be collected upon delivery.',
           },
         ],
       });
 
       // Deduct stock atomically
       await adjustProductStock(newOrder.items, -1);
+
+      // Asynchronously send order confirmation receipt email to customer's Gmail
+      sendOrderConfirmationReceipt(newOrder).catch((err) => {
+        console.error('[EMAIL SERVICE] Failed to send COD confirmation receipt:', err.message);
+      });
 
       return res.status(201).json({
         success: true,

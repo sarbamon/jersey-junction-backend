@@ -6,6 +6,7 @@ const Order = require('../models/Order');
 const User = require('../models/User');
 const { adjustProductStock } = require('../utils/inventory');
 const { calculateCartTotals } = require('../utils/pricing');
+const { sendOrderConfirmationReceipt } = require('../utils/emailService');
 
 const getRazorpayInstance = () => {
   const key_id = process.env.RAZORPAY_KEY_ID?.trim();
@@ -289,6 +290,11 @@ router.post('/verify', async (req, res) => {
     await order.save();
     console.log(`[Payment] Order ${order.orderId} successfully marked Paid via verified signature`);
 
+    // Send Order Confirmation Receipt via Gmail
+    sendOrderConfirmationReceipt(order).catch((err) => {
+      console.error('[EMAIL SERVICE] Failed to send Razorpay confirmation receipt:', err.message);
+    });
+
     return res.json({
       success: true,
       message: 'Payment signature verified successfully',
@@ -404,6 +410,11 @@ router.post('/webhook', async (req, res) => {
           console.log(
             `[Webhook] SUCCESS: Order ${order.orderId} updated to Paid via Backend-to-Backend Webhook`
           );
+
+          // Send Order Confirmation Receipt via Gmail
+          sendOrderConfirmationReceipt(order).catch((err) => {
+            console.error('[EMAIL SERVICE] Failed to send Webhook confirmation receipt:', err.message);
+          });
         } else {
           console.warn(`[Webhook] Could not find pending order in DB for rzpOrderId: ${rzpOrderId}, notesOrderId: ${notesOrderId}`);
         }
