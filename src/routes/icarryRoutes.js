@@ -554,11 +554,34 @@ router.post('/estimate', async (req, res) => {
   }
 });
 
-// POST /api/icarry/check-pincode - Check if delivery pincode is serviceable by iCarry
-router.post('/check-pincode', async (req, res) => {
+// Helper to lookup State, District, and City for an Indian Pincode
+async function lookupPincodeLocation(pincode) {
+  const result = { state: '', district: '', city: '' };
+  try {
+    const response = await fetch(`https://api.postalpincode.in/pincode/${pincode}`, {
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(3500),
+    });
+    if (response.ok) {
+      const data = await response.json();
+      if (Array.isArray(data) && data[0] && data[0].Status === 'Success' && Array.isArray(data[0].PostOffice) && data[0].PostOffice.length > 0) {
+        const po = data[0].PostOffice[0];
+        result.state = po.State || '';
+        result.district = po.District || '';
+        result.city = (po.Block && po.Block !== 'NA') ? po.Block : (po.Name || po.District || '');
+      }
+    }
+  } catch (err) {
+    console.warn('[iCarry Pincode] Location lookup error:', err.message);
+  }
+  return result;
+}
+
+// POST & GET /api/icarry/check-pincode - Check serviceability and auto-detect State & District
+const handleCheckPincode = async (req, res) => {
   try {
     const config = getICarryConfig();
-    const pincode = String(req.body.pincode || req.query.pincode || '').trim();
+    const pincode = String(req.body.pincode || req.query.pincode || req.params.pincode || '').trim();
 
     if (!pincode || !/^[1-9][0-9]{5}$/.test(pincode)) {
       return res.status(200).json({
@@ -568,67 +591,110 @@ router.post('/check-pincode', async (req, res) => {
       });
     }
 
-    const effectiveOriginPincode = String(config.senderPincode || '400052').trim();
-    const effectivePickupAddressId = String(config.pickupAddressId || '');
+    // Step 1: Detect State, District & City in parallel with iCarry check
+    const [locationInfo, icarryData] = await Promise.all([
+      lookupPincodeLocation(pincode),
+      (async () => {
+        try {
+          const effectiveOriginPincode = String(config.senderPincode || '400052').trim();
+          const effectivePickupAddressId = String(config.pickupAddressId || '');
 
-    const estimateParams = new URLSearchParams({
-      origin_pincode: String(effectiveOriginPincode),
-      pickup_pincode: String(effectiveOriginPincode),
-      destination_pincode: String(pincode),
-      weight: '400',
-      length: '25',
-      breadth: '20',
-      height: '3',
-      origin_country_code: 'IN',
-      destination_country_code: 'IN',
-      country_code: 'IN',
-      shipment_mode: 'S',
-      shipment_type: 'P',
-      shipment_value: '1000',
-      parcel_type: 'P',
-      parcel_value: '1000',
-    });
+          const estimateParams = new URLSearchParams({
+            origin_pincode: String(effectiveOriginPincode),
+            pickup_pincode: String(effectiveOriginPincode),
+            destination_pincode: String(pincode),
+            weight: '400',
+            length: '25',
+            breadth: '20',
+            height: '3',
+            origin_country_code: 'IN',
+            destination_country_code: 'IN',
+            country_code: 'IN',
+            shipment_mode: 'S',
+            shipment_type: 'P',
+            shipment_value: '1000',
+            parcel_type: 'P',
+            parcel_value: '1000',
+          });
 
-    if (effectivePickupAddressId) {
-      estimateParams.append('pickup_address_id', effectivePickupAddressId);
-    }
+          if (effectivePickupAddressId) {
+            estimateParams.append('pickup_address_id', effectivePickupAddressId);
+          }
 
-    const { data, rawText } = await executeICarryPost('https://www.icarry.in/api_get_estimate', estimateParams, config);
+          const { data } = await executeICarryPost('https://www.icarry.in/api_get_estimate', estimateParams, config);
+          return data;
+        } catch (e) {
+          return null;
+        }
+      })()
+    ]);
 
-    const rawList = (data && (data.estimate || data.couriers || data.data || data.available_couriers || (Array.isArray(data) ? data : null))) || [];
+    const rawList = (icarryData && (icarryData.estimate || icarryData.couriers || icarryData.data || icarryData.available_couriers || (Array.isArray(icarryData) ? icarryData : null))) || [];
 
-    if (Array.isArray(rawList) && rawList.length > 0) {
-      const courierNames = rawList.map(c => c.courier_name || c.name || c.courier || c.courier_group_name).filter(Boolean);
-      const fastestDays = rawList[0].estimated_delivery_days ? `${rawList[0].estimated_delivery_days} Days` : (rawList[0].tat || '2 - 4 Days');
+    const isServiceable = Array.isArray(rawList) && rawList.length > 0;
+    const courierNames = isServiceable ? rawList.map(c => c.courier_name || c.name || c.courier || c.courier_group_name).filter(Boolean) : [];
+    const fastestDays = isServiceable ? (rawList[0].estimated_delivery_days ? `${rawList[0].estimated_delivery_days} Days` : (rawList[0].tat || '2 - 4 Days')) : '3 - 5 Days';
 
+    const locationLabel = [locationInfo.city, locationInfo.district, locationInfo.state].filter(Boolean).join(', ');
+
+    if (isServiceable) {
       return res.status(200).json({
         success: true,
         available: true,
         pincode,
+        state: locationInfo.state,
+        district: locationInfo.district,
+        city: locationInfo.city || locationInfo.district,
         estimatedDays: fastestDays,
         couriers: courierNames.slice(0, 3),
         codAvailable: true,
-        message: `Delivery available to ${pincode}! (Est. ${fastestDays})`,
-      });
-    } else {
-      return res.status(200).json({
-        success: true,
-        available: false,
-        pincode,
-        message: `Delivery is currently not available to pincode ${pincode}.`,
+        message: `Delivery available to ${locationLabel || pincode}! (Est. ${fastestDays})`,
       });
     }
+
+    // If iCarry didn't return live couriers but we detected valid Indian pincode location
+    if (locationInfo.state) {
+      return res.status(200).json({
+        success: true,
+        available: true,
+        pincode,
+        state: locationInfo.state,
+        district: locationInfo.district,
+        city: locationInfo.city || locationInfo.district,
+        estimatedDays: '3 - 5 Days',
+        couriers: ['Standard Indian Courier'],
+        codAvailable: true,
+        message: `Deliverable to ${locationLabel || pincode} via Standard Courier (Est. 3-5 Days)`,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      available: false,
+      pincode,
+      state: '',
+      district: '',
+      city: '',
+      message: `Delivery is currently not available to pincode ${pincode}.`,
+    });
   } catch (error) {
     console.error('Error checking pincode:', error);
     const pincode = String(req.body?.pincode || req.query?.pincode || '').trim();
     res.status(200).json({ 
       success: true, 
       available: false, 
-      pincode, 
+      pincode,
+      state: '',
+      district: '',
+      city: '',
       message: pincode ? `Delivery is currently not available to pincode ${pincode}.` : 'Unable to check delivery availability.' 
     });
   }
-});
+};
+
+router.post('/check-pincode', handleCheckPincode);
+router.get('/check-pincode', handleCheckPincode);
+router.get('/pincode/:pincode', handleCheckPincode);
 
 // State code normalization helper for iCarry API
 const INDIAN_STATES_MAP = {
