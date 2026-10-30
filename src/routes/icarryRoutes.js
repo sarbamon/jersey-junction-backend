@@ -648,7 +648,7 @@ const handleCheckPincode = async (req, res) => {
         estimatedDays: fastestDays,
         couriers: courierNames.slice(0, 3),
         codAvailable: true,
-        message: `Delivery available to ${locationLabel || pincode}! (Est. ${fastestDays})`,
+        message: `Delivery available to ${locationLabel || pincode}!`,
       });
     }
 
@@ -664,7 +664,7 @@ const handleCheckPincode = async (req, res) => {
         estimatedDays: '3 - 5 Days',
         couriers: ['Standard Indian Courier'],
         codAvailable: true,
-        message: `Deliverable to ${locationLabel || pincode} via Standard Courier (Est. 3-5 Days)`,
+        message: `Delivery available to ${locationLabel || pincode}!`,
       });
     }
 
