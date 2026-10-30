@@ -33,3 +33,4 @@ const orderOtpSchema = new mongoose.Schema(
 );
 
 module.exports = mongoose.model('OrderOtp', orderOtpSchema);
+

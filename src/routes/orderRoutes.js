@@ -310,38 +310,6 @@ router.post('/', async (req, res, next) => {
         });
       }
 
-      // Enforce Email OTP Verification for COD Order Confirmation
-      const cleanOtp = (req.body.otp || '').toString().trim();
-      let otpVerified = false;
-
-      if (cleanOtp) {
-        const otpRecord = await OrderOtp.findOne({
-          email: normalizedEmail,
-          otp: cleanOtp,
-        });
-        if (otpRecord) {
-          otpVerified = true;
-          await OrderOtp.deleteMany({ email: normalizedEmail });
-        }
-      } else {
-        const verifiedRecord = await OrderOtp.findOne({
-          email: normalizedEmail,
-          verified: true,
-        });
-        if (verifiedRecord) {
-          otpVerified = true;
-          await OrderOtp.deleteMany({ email: normalizedEmail });
-        }
-      }
-
-      if (!otpVerified) {
-        return res.status(400).json({
-          success: false,
-          requireOtp: true,
-          message: 'Email confirmation is required. Please enter the 6-digit OTP code sent to your Gmail.',
-        });
-      }
-
       // Authoritative pricing calculation
       const breakdown = await calculateCartTotals({
         items,
@@ -379,7 +347,7 @@ router.post('/', async (req, res, next) => {
           {
             status: 'Confirmed',
             timestamp: new Date().toISOString().replace('T', ' ').substring(0, 16),
-            note: 'COD order confirmed via Gmail OTP. Payment to be collected upon delivery.',
+            note: 'Order placed with Cash on Delivery. Order confirmation email sent to customer.',
           },
         ],
       });
@@ -387,7 +355,7 @@ router.post('/', async (req, res, next) => {
       // Deduct stock atomically
       await adjustProductStock(newOrder.items, -1);
 
-      // Asynchronously send order confirmation receipt email to customer's Gmail
+      // Asynchronously send order confirmation receipt email from support@jerseyjunction.shop
       sendOrderConfirmationReceipt(newOrder).catch((err) => {
         console.error('[EMAIL SERVICE] Failed to send COD confirmation receipt:', err.message);
       });
