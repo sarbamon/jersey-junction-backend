@@ -35,6 +35,8 @@ app.use('/upload/disk', express.static(path.join(__dirname, '../public/uploads')
 // Enable CORS
 const allowedOrigins = [
   process.env.CLIENT_URL,
+  'https://jerseyjunction.shop',
+  'https://www.jerseyjunction.shop',
   'http://localhost:3000',
   'http://localhost:3001',
   'http://127.0.0.1:3000',
@@ -76,6 +78,30 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(cookieParser());
 
 const mongoose = require('mongoose');
+
+// Root landing endpoint
+app.get('/', (req, res) => {
+  res.status(200).json({
+    status: 'online',
+    message: 'Jersey Junction API Server is active and operational.',
+    version: '1.0.0',
+    endpoints: {
+      health: '/health',
+      products: '/api/products',
+      orders: '/api/orders',
+      categories: '/api/categories',
+      banners: '/api/banners',
+      settings: '/api/settings',
+    },
+  });
+});
+
+app.get('/api', (req, res) => {
+  res.status(200).json({
+    status: 'online',
+    message: 'Jersey Junction API v1',
+  });
+});
 
 // Health check endpoint with database diagnostics
 app.get('/health', (req, res) => {
