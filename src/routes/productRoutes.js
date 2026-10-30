@@ -224,7 +224,13 @@ router.get('/:id', async (req, res, next) => {
     // Compute live sales telemetry only when requested (e.g., admin dashboard)
     if (req.query.telemetry === 'true') {
       try {
-        const orders = await Order.find({ orderStatus: { $ne: 'Cancelled' } }).lean();
+        const orders = await Order.find({
+          orderStatus: { $ne: 'Cancelled' },
+          $or: [
+            { paymentStatus: 'Paid' },
+            { paymentMethod: { $in: ['Cash on Delivery', 'COD'] } },
+          ],
+        }).lean();
         let liveSold = 0;
         let liveRevenue = 0;
         const prodIdStr = product._id.toString();

@@ -39,12 +39,23 @@ const formatOrder = (order) => ({
 const paymentRouter = require('./paymentRoutes');
 const reconcileRazorpayOrder = (order) => paymentRouter.reconcileRazorpayOrder ? paymentRouter.reconcileRazorpayOrder(order) : order;
 
+// Helper to determine if an order is confirmed/paid:
+// 1. All Cash on Delivery (COD) orders
+// 2. Orders that have completed payment (paymentStatus === 'Paid')
+// Excludes uncompleted payment portal attempts where user opened Razorpay but did not pay.
+const isOrderConfirmed = (order) => {
+  if (!order) return false;
+  const isCOD = order.paymentMethod === 'Cash on Delivery' || order.paymentMethod === 'COD';
+  const isPaid = order.paymentStatus === 'Paid';
+  return isCOD || isPaid;
+};
+
 // GET /api/orders - Get all orders (Admin or Orders Employee)
 router.get('/', protect, authorizePermission('orders'), async (req, res, next) => {
   try {
     const orders = await Order.find().sort({ createdAt: -1 });
 
-    // Auto-reconcile pending Razorpay orders with Razorpay API
+    // Auto-reconcile pending Razorpay orders with Razorpay API (in case payment completed but webhook was delayed)
     const reconciled = await Promise.all(
       orders.map(async (order) => {
         if (order.paymentStatus === 'Pending' && order.razorpayOrderId) {
@@ -54,10 +65,14 @@ router.get('/', protect, authorizePermission('orders'), async (req, res, next) =
       })
     );
 
+    // CRITICAL: Only show confirmed orders (Paid online orders or Cash on Delivery)
+    // Never show unpaid abandoned payment portal sessions
+    const confirmedOrders = reconciled.filter(isOrderConfirmed);
+
     res.status(200).json({
       success: true,
-      count: reconciled.length,
-      data: reconciled.map(formatOrder),
+      count: confirmedOrders.length,
+      data: confirmedOrders.map(formatOrder),
     });
   } catch (error) {
     next(error);
@@ -89,10 +104,13 @@ router.get('/user/:email', protect, async (req, res, next) => {
       })
     );
 
+    // Only show confirmed orders to customer
+    const confirmedOrders = reconciled.filter(isOrderConfirmed);
+
     res.status(200).json({
       success: true,
-      count: reconciled.length,
-      data: reconciled.map(formatOrder),
+      count: confirmedOrders.length,
+      data: confirmedOrders.map(formatOrder),
     });
   } catch (error) {
     next(error);
