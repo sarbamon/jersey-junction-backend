@@ -1,6 +1,41 @@
 const nodemailer = require('nodemailer');
 
 /**
+ * Returns a configured Nodemailer transporter for Brevo (Sendinblue) SMTP Relay.
+ * Server: smtp-relay.brevo.com, Port: 587 (TLS)
+ * Auth Pass: xsmtpsib-... key
+ */
+const getBrevoSmtpTransporter = () => {
+  const brevoKey = (
+    process.env.BREVO_SMTP_KEY ||
+    process.env.BREVO_SMTP_PASS ||
+    (process.env.SMTP_PASS && process.env.SMTP_PASS.startsWith('xsmtpsib-') ? process.env.SMTP_PASS : '') ||
+    ''
+  ).trim();
+
+  if (!brevoKey || brevoKey.length < 10) return null;
+
+  const brevoLogin = (
+    process.env.BREVO_SMTP_LOGIN ||
+    process.env.BREVO_LOGIN ||
+    process.env.BREVO_SMTP_USER ||
+    process.env.BREVO_USER ||
+    process.env.SMTP_USER ||
+    'support@jerseyjunction.shop'
+  ).trim();
+
+  return nodemailer.createTransport({
+    host: 'smtp-relay.brevo.com',
+    port: 587,
+    secure: false,
+    auth: {
+      user: brevoLogin,
+      pass: brevoKey,
+    },
+  });
+};
+
+/**
  * Returns a configured Nodemailer transporter for Hostinger SMTP (or custom SMTP).
  * Default host: smtp.hostinger.com, port: 465 (SSL)
  * User: support@jerseyjunction.shop
@@ -32,19 +67,13 @@ const getTransporter = () => {
 
 /**
  * Resilient Dispatcher:
- * 1. Attempts Brevo (Sendinblue) Transactional HTTP API (ideal for production cloud deployments).
- * 2. If Brevo fails or is unconfigured, seamlessly falls back to Hostinger SMTP.
+ * 1. Attempts Brevo SMTP Relay (smtp-relay.brevo.com:587) - bypasses IP restrictions.
+ * 2. Attempts Brevo REST HTTP API.
+ * 3. Falls back to Hostinger SMTP (smtp.hostinger.com:465).
  */
 const dispatchEmail = async ({ to, customerName, subject, html }) => {
   const cleanEmail = (to || '').trim().toLowerCase();
   if (!cleanEmail) return { success: false, error: 'Recipient email required' };
-
-  const brevoApiKey = (
-    process.env.BRAVO_EMAIL_API_KEY ||
-    process.env.BREVO_EMAIL_API_KEY ||
-    process.env.BREVO_API_KEY ||
-    ''
-  ).trim();
 
   const senderEmail = (
     process.env.SMTP_FROM ||
@@ -55,7 +84,32 @@ const dispatchEmail = async ({ to, customerName, subject, html }) => {
 
   const senderName = process.env.EMAIL_FROM_NAME || 'Jersey Junction';
 
-  // 1. Try Brevo API first if configured
+  // 1. Try Brevo SMTP Relay first if configured (works across cloud hosts without IP lock)
+  const brevoTransporter = getBrevoSmtpTransporter();
+  if (brevoTransporter) {
+    try {
+      const info = await brevoTransporter.sendMail({
+        from: `"${senderName}" <${senderEmail}>`,
+        replyTo: senderEmail,
+        to: cleanEmail,
+        subject,
+        html,
+      });
+      console.log(`[EMAIL SERVICE (BREVO SMTP)] Delivered to ${cleanEmail}: ${info.messageId}`);
+      return { success: true, provider: 'brevo-smtp', messageId: info.messageId };
+    } catch (brevoSmtpErr) {
+      console.warn(`[EMAIL SERVICE] Brevo SMTP relay notice: ${brevoSmtpErr.message}. Trying next provider...`);
+    }
+  }
+
+  const brevoApiKey = (
+    process.env.BRAVO_EMAIL_API_KEY ||
+    process.env.BREVO_EMAIL_API_KEY ||
+    process.env.BREVO_API_KEY ||
+    ''
+  ).trim();
+
+  // 2. Try Brevo REST API if configured
   if (brevoApiKey) {
     try {
       const response = await fetch('https://api.brevo.com/v3/smtp/email', {
@@ -88,7 +142,7 @@ const dispatchEmail = async ({ to, customerName, subject, html }) => {
     }
   }
 
-  // 2. Fallback to Hostinger SMTP (or custom SMTP)
+  // 3. Fallback to Hostinger SMTP (or custom SMTP)
   const transporter = getTransporter();
   if (transporter) {
     try {
