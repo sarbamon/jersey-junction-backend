@@ -35,7 +35,8 @@ const getTransporter = () => {
  * Sent from: support@jerseyjunction.shop
  */
 const sendOrderConfirmationReceipt = async (order) => {
-  const cleanEmail = (order?.email || '').trim().toLowerCase();
+  const orderData = order && typeof order.toObject === 'function' ? order.toObject() : (order || {});
+  const cleanEmail = (orderData.email || order?.email || '').trim().toLowerCase();
   if (!cleanEmail) return { success: false, error: 'No recipient email provided' };
 
   const transporter = getTransporter();
@@ -49,16 +50,16 @@ const sendOrderConfirmationReceipt = async (order) => {
     console.log(`[SIMULATED ORDER CONFIRMATION]`);
     console.log(`  To: ${cleanEmail}`);
     console.log(`  From: "${senderName}" <${senderEmail}>`);
-    console.log(`  Order ID: ${order.orderId || order.id}`);
-    console.log(`  Amount: ₹${order.totalAmount}`);
-    console.log(`  Items: ${(order.items || []).length} jersey(s)`);
-    console.log(`  Payment: ${order.paymentMethod} (${order.paymentStatus})`);
+    console.log(`  Order ID: ${orderData.orderId || orderData.id}`);
+    console.log(`  Amount: ₹${orderData.totalAmount}`);
+    console.log(`  Items: ${(orderData.items || []).length} jersey(s)`);
+    console.log(`  Payment: ${orderData.paymentMethod} (${orderData.paymentStatus})`);
     console.log(`  >>> Add SMTP_PASS to .env to deliver real emails via Hostinger <<<`);
     console.log('============================================================\n');
     return { success: true, simulated: true };
   }
 
-  const itemsHtml = (order.items || [])
+  const itemsHtml = (orderData.items || [])
     .map(
       (item) => `
       <tr style="border-bottom: 1px solid #28282c;">
@@ -80,7 +81,7 @@ const sendOrderConfirmationReceipt = async (order) => {
     )
     .join('');
 
-  const shippingAddr = order.shippingAddress || {};
+  const shippingAddr = orderData.shippingAddress || {};
 
   const html = `
     <!DOCTYPE html>
@@ -115,8 +116,8 @@ const sendOrderConfirmationReceipt = async (order) => {
             <span class="badge">Order Confirmed</span>
             <h2 class="title">THANK YOU FOR YOUR ORDER!</h2>
             <p class="subtitle">
-              Hi <strong>${order.customerName || 'Customer'}</strong>,<br/>
-              Your order <strong>${order.orderId || order.id}</strong> has been received and confirmed. We are preparing it for dispatch.
+              Hi <strong>${orderData.customerName || 'Customer'}</strong>,<br/>
+              Your order <strong>${orderData.orderId || orderData.id}</strong> has been received and confirmed. We are preparing it for dispatch.
             </p>
 
             <div class="card">
@@ -140,21 +141,21 @@ const sendOrderConfirmationReceipt = async (order) => {
               <table style="font-size: 14px;">
                 <tr>
                   <td style="padding: 4px 0; color: #a1a1aa;">Subtotal:</td>
-                  <td style="padding: 4px 0; text-align: right; color: #ffffff;">₹${Number(order.subtotal || 0).toLocaleString('en-IN')}</td>
+                  <td style="padding: 4px 0; text-align: right; color: #ffffff;">₹${Number(orderData.subtotal || 0).toLocaleString('en-IN')}</td>
                 </tr>
                 <tr>
                   <td style="padding: 4px 0; color: #a1a1aa;">Shipping Fee:</td>
-                  <td style="padding: 4px 0; text-align: right; color: #ffffff;">${Number(order.shippingFee || 0) === 0 ? 'FREE' : `₹${Number(order.shippingFee).toLocaleString('en-IN')}`}</td>
+                  <td style="padding: 4px 0; text-align: right; color: #ffffff;">${Number(orderData.shippingFee || 0) === 0 ? 'FREE' : `₹${Number(orderData.shippingFee).toLocaleString('en-IN')}`}</td>
                 </tr>
-                ${Number(order.discountAmount || 0) > 0 ? `
+                ${Number(orderData.discountAmount || 0) > 0 ? `
                   <tr>
                     <td style="padding: 4px 0; color: #10b981;">Coupon Discount:</td>
-                    <td style="padding: 4px 0; text-align: right; color: #10b981;">-₹${Number(order.discountAmount).toLocaleString('en-IN')}</td>
+                    <td style="padding: 4px 0; text-align: right; color: #10b981;">-₹${Number(orderData.discountAmount).toLocaleString('en-IN')}</td>
                   </tr>
                 ` : ''}
                 <tr style="border-top: 1px solid #28282c;">
                   <td style="padding: 10px 0 0 0; font-weight: 800; font-size: 16px; color: #ffffff;">Total Amount:</td>
-                  <td style="padding: 10px 0 0 0; text-align: right; font-weight: 800; font-size: 16px; color: #C99682;">₹${Number(order.totalAmount || 0).toLocaleString('en-IN')}</td>
+                  <td style="padding: 10px 0 0 0; text-align: right; font-weight: 800; font-size: 16px; color: #C99682;">₹${Number(orderData.totalAmount || 0).toLocaleString('en-IN')}</td>
                 </tr>
               </table>
             </div>
@@ -162,12 +163,12 @@ const sendOrderConfirmationReceipt = async (order) => {
             <div class="card">
               <h3 class="card-title">Shipping & Payment Details</h3>
               <p style="margin: 0 0 6px 0; font-size: 13px; color: #d4d4d8;">
-                <strong>Deliver To:</strong> ${shippingAddr.name || order.customerName}<br/>
+                <strong>Deliver To:</strong> ${shippingAddr.name || orderData.customerName}<br/>
                 ${shippingAddr.addressLine || ''}, ${shippingAddr.city || ''}, ${shippingAddr.state || ''} - ${shippingAddr.pincode || ''}<br/>
-                <strong>Phone:</strong> ${shippingAddr.phone || order.phone || 'N/A'}
+                <strong>Phone:</strong> ${shippingAddr.phone || orderData.phone || 'N/A'}
               </p>
               <p style="margin: 8px 0 0 0; font-size: 13px; color: #d4d4d8;">
-                <strong>Payment Method:</strong> ${order.paymentMethod || 'Prepaid'} (${order.paymentStatus || 'Confirmed'})
+                <strong>Payment Method:</strong> ${orderData.paymentMethod || 'Prepaid'} (${orderData.paymentStatus || 'Confirmed'})
               </p>
             </div>
           </div>
@@ -185,7 +186,7 @@ const sendOrderConfirmationReceipt = async (order) => {
       from: `"${senderName}" <${senderEmail}>`,
       replyTo: senderEmail,
       to: cleanEmail,
-      subject: `Order Confirmed: ${order.orderId || order.id} - Jersey Junction`,
+      subject: `Order Confirmed: ${orderData.orderId || orderData.id} - Jersey Junction`,
       html,
     });
     console.log(`[EMAIL SERVICE] Order confirmation receipt delivered from ${senderEmail} to ${cleanEmail}: ${info.messageId}`);
