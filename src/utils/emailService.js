@@ -425,10 +425,192 @@ const sendContactInquiryEmail = async ({ name, email, orderNumber, subject, mess
   });
 };
 
+/**
+ * Sends a welcome onboarding email with login credentials and portal link to a newly created employee.
+ */
+const sendEmployeeWelcomeEmail = async ({ name, email, password, employeeTitle, permissions = [] }) => {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanEmail) return { success: false, error: 'Employee email required' };
+
+  const cleanName = (name || 'Team Member').trim();
+  const cleanTitle = (employeeTitle || 'Staff Member').trim();
+  const clientUrl = (process.env.CLIENT_URL || 'https://jerseyjunction.shop').trim().replace(/\/+$/, '');
+  const loginUrl = `${clientUrl}/admin/login`;
+
+  const permissionsList = Array.isArray(permissions) && permissions.length > 0
+    ? permissions.map((p) => `<span style="display: inline-block; background: #27272a; color: #f4c84a; font-size: 11px; font-weight: bold; text-transform: uppercase; padding: 4px 8px; border-radius: 6px; margin: 2px 4px 2px 0;">${p}</span>`).join(' ')
+    : '<span style="color: #a1a1aa; font-size: 12px;">Standard Staff Access</span>';
+
+  const subject = `Welcome to the Team, ${cleanName}! Your Staff Account Credentials - Jersey Junction`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Welcome to Jersey Junction</title>
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0c10; color: #ffffff; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background: #121318; border: 1px solid #27272a; border-radius: 16px; overflow: hidden; }
+        .header { background: #000000; padding: 28px 24px; border-bottom: 2px solid #f4c84a; text-align: center; }
+        .header h1 { margin: 0; font-size: 22px; font-weight: 900; color: #f4c84a; letter-spacing: 2px; text-transform: uppercase; }
+        .header p { margin: 6px 0 0; font-size: 12px; color: #a1a1aa; text-transform: uppercase; letter-spacing: 1px; }
+        .content { padding: 32px 24px; }
+        .welcome-text { font-size: 15px; color: #e4e4e7; line-height: 1.6; margin-top: 0; margin-bottom: 24px; }
+        .creds-box { background: #000000; border: 1px solid #3f3f46; border-radius: 12px; padding: 20px; margin-bottom: 24px; }
+        .btn-wrapper { text-align: center; margin: 32px 0 20px; }
+        .btn { display: inline-block; background: #f4c84a; color: #000000; font-weight: 900; text-decoration: none; padding: 14px 32px; border-radius: 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; }
+        .notice { font-size: 12px; color: #a1a1aa; line-height: 1.5; background: #1c1917; border-left: 3px solid #f4c84a; padding: 12px 16px; border-radius: 0 8px 8px 0; margin-top: 24px; }
+        .footer { padding: 20px 24px; background: #000000; text-align: center; font-size: 11px; color: #71717a; border-top: 1px solid #27272a; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>Jersey Junction</h1>
+          <p>Staff Onboarding &bull; Internal Portal</p>
+        </div>
+        <div class="content">
+          <p class="welcome-text">
+            Hello <strong>${cleanName}</strong>,<br/>
+            An employee account has been created for you on the <strong>Jersey Junction Admin Portal</strong> with the role <strong>${cleanTitle}</strong>. Below are your official login credentials:
+          </p>
+
+          <div class="creds-box">
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr>
+                <td style="padding: 10px 0; color: #a1a1aa; font-weight: bold; font-size: 11px; text-transform: uppercase; width: 140px;">Portal Login URL</td>
+                <td style="padding: 10px 0;"><a href="${loginUrl}" style="color: #f4c84a; text-decoration: underline; font-family: monospace; font-size: 12px;">${loginUrl}</a></td>
+              </tr>
+              <tr style="border-top: 1px solid #27272a;">
+                <td style="padding: 10px 0; color: #a1a1aa; font-weight: bold; font-size: 11px; text-transform: uppercase;">Login Email</td>
+                <td style="padding: 10px 0; color: #ffffff; font-family: monospace; font-weight: bold; font-size: 14px;">${cleanEmail}</td>
+              </tr>
+              <tr style="border-top: 1px solid #27272a;">
+                <td style="padding: 10px 0; color: #a1a1aa; font-weight: bold; font-size: 11px; text-transform: uppercase;">Assigned Password</td>
+                <td style="padding: 10px 0; color: #f4c84a; font-family: monospace; font-weight: bold; font-size: 16px; letter-spacing: 1px;">${password}</td>
+              </tr>
+              <tr style="border-top: 1px solid #27272a;">
+                <td style="padding: 10px 0; color: #a1a1aa; font-weight: bold; font-size: 11px; text-transform: uppercase;">Role & Title</td>
+                <td style="padding: 10px 0; color: #e4e4e7; font-size: 13px;">${cleanTitle}</td>
+              </tr>
+              <tr style="border-top: 1px solid #27272a;">
+                <td style="padding: 10px 0; color: #a1a1aa; font-weight: bold; font-size: 11px; text-transform: uppercase; vertical-align: top;">Section Permissions</td>
+                <td style="padding: 10px 0;">${permissionsList}</td>
+              </tr>
+            </table>
+          </div>
+
+          <div class="btn-wrapper">
+            <a href="${loginUrl}" class="btn">Log In To Admin Portal &rarr;</a>
+          </div>
+
+          <div class="notice">
+            <strong>Security Reminder:</strong> Please keep your login credentials secure. Do not share your password with anyone outside the authorized management team.
+          </div>
+        </div>
+        <div class="footer">
+          &copy; ${new Date().getFullYear()} Jersey Junction &bull; Internal Administration
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return await dispatchEmail({
+    to: cleanEmail,
+    customerName: cleanName,
+    subject,
+    html,
+  });
+};
+
+/**
+ * Sends a notification email when an existing employee's password is reset by admin.
+ */
+const sendEmployeePasswordResetEmail = async ({ name, email, newPassword }) => {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanEmail) return { success: false, error: 'Employee email required' };
+
+  const cleanName = (name || 'Team Member').trim();
+  const clientUrl = (process.env.CLIENT_URL || 'https://jerseyjunction.shop').trim().replace(/\/+$/, '');
+  const loginUrl = `${clientUrl}/admin/login`;
+
+  const subject = `Your Jersey Junction Staff Password Has Been Updated`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Staff Password Updated</title>
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0c10; color: #ffffff; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background: #121318; border: 1px solid #27272a; border-radius: 16px; overflow: hidden; }
+        .header { background: #000000; padding: 28px 24px; border-bottom: 2px solid #f4c84a; text-align: center; }
+        .header h1 { margin: 0; font-size: 22px; font-weight: 900; color: #f4c84a; letter-spacing: 2px; text-transform: uppercase; }
+        .content { padding: 32px 24px; }
+        .creds-box { background: #000000; border: 1px solid #3f3f46; border-radius: 12px; padding: 20px; margin: 20px 0; }
+        .btn-wrapper { text-align: center; margin: 28px 0; }
+        .btn { display: inline-block; background: #f4c84a; color: #000000; font-weight: 900; text-decoration: none; padding: 14px 32px; border-radius: 10px; font-size: 13px; text-transform: uppercase; }
+        .footer { padding: 20px 24px; background: #000000; text-align: center; font-size: 11px; color: #71717a; border-top: 1px solid #27272a; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>Jersey Junction</h1>
+          <p style="margin: 6px 0 0; font-size: 12px; color: #a1a1aa; text-transform: uppercase;">Staff Account Notice</p>
+        </div>
+        <div class="content">
+          <p style="font-size: 15px; color: #e4e4e7; line-height: 1.6; margin-top: 0;">
+            Hello <strong>${cleanName}</strong>,<br/>
+            Your password for the <strong>Jersey Junction Admin Portal</strong> has been updated by the store administrator. Below are your updated credentials:
+          </p>
+
+          <div class="creds-box">
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr>
+                <td style="padding: 10px 0; color: #a1a1aa; font-weight: bold; font-size: 11px; text-transform: uppercase; width: 140px;">Portal Login URL</td>
+                <td style="padding: 10px 0;"><a href="${loginUrl}" style="color: #f4c84a; text-decoration: underline; font-family: monospace; font-size: 12px;">${loginUrl}</a></td>
+              </tr>
+              <tr style="border-top: 1px solid #27272a;">
+                <td style="padding: 10px 0; color: #a1a1aa; font-weight: bold; font-size: 11px; text-transform: uppercase;">Login Email</td>
+                <td style="padding: 10px 0; color: #ffffff; font-family: monospace; font-weight: bold; font-size: 14px;">${cleanEmail}</td>
+              </tr>
+              <tr style="border-top: 1px solid #27272a;">
+                <td style="padding: 10px 0; color: #a1a1aa; font-weight: bold; font-size: 11px; text-transform: uppercase;">New Password</td>
+                <td style="padding: 10px 0; color: #f4c84a; font-family: monospace; font-weight: bold; font-size: 16px; letter-spacing: 1px;">${newPassword}</td>
+              </tr>
+            </table>
+          </div>
+
+          <div class="btn-wrapper">
+            <a href="${loginUrl}" class="btn">Log In To Admin Portal &rarr;</a>
+          </div>
+        </div>
+        <div class="footer">
+          &copy; ${new Date().getFullYear()} Jersey Junction &bull; Internal Administration
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return await dispatchEmail({
+    to: cleanEmail,
+    customerName: cleanName,
+    subject,
+    html,
+  });
+};
+
 module.exports = {
   sendOrderConfirmationReceipt,
   sendOrderConfirmationOtp,
   sendContactInquiryEmail,
+  sendEmployeeWelcomeEmail,
+  sendEmployeePasswordResetEmail,
   getTransporter,
   dispatchEmail,
 };

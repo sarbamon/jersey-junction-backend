@@ -1,6 +1,7 @@
 const express = require('express');
 const User = require('../models/User');
 const { protect, authorize } = require('../middleware/auth');
+const { sendEmployeeWelcomeEmail, sendEmployeePasswordResetEmail } = require('../utils/emailService');
 
 const router = express.Router();
 
@@ -86,6 +87,20 @@ router.post('/', async (req, res, next) => {
       status: 'Active',
     });
 
+    // Send credentials and login portal email to the newly created employee
+    try {
+      await sendEmployeeWelcomeEmail({
+        name: cleanName,
+        email: cleanEmail,
+        password,
+        employeeTitle: (employeeTitle || 'Staff Member').trim(),
+        permissions: validPerms,
+      });
+      console.log(`[EMPLOYEE] Welcome email with password sent to ${cleanEmail}`);
+    } catch (mailErr) {
+      console.warn(`[EMPLOYEE] Failed to send credentials email to ${cleanEmail}:`, mailErr.message);
+    }
+
     res.status(201).json({
       success: true,
       data: {
@@ -133,7 +148,8 @@ router.put('/:id', async (req, res, next) => {
     }
 
     // Optional password reset by Boss
-    if (password && password.trim().length > 0) {
+    const isPasswordReset = Boolean(password && password.trim().length > 0);
+    if (isPasswordReset) {
       if (password.trim().length < 6) {
         return res.status(400).json({
           success: false,
@@ -144,6 +160,20 @@ router.put('/:id', async (req, res, next) => {
     }
 
     await employee.save();
+
+    // If password was reset, notify the employee via email
+    if (isPasswordReset) {
+      try {
+        await sendEmployeePasswordResetEmail({
+          name: employee.name,
+          email: employee.email,
+          newPassword: password.trim(),
+        });
+        console.log(`[EMPLOYEE] Password reset email sent to ${employee.email}`);
+      } catch (mailErr) {
+        console.warn(`[EMPLOYEE] Failed to send password reset email to ${employee.email}:`, mailErr.message);
+      }
+    }
 
     res.status(200).json({
       success: true,
