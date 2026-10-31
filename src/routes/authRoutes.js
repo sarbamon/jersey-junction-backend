@@ -317,7 +317,7 @@ router.put('/users/:id/reset-password', protect, authorize('admin'), async (req,
 });
 
 // @route   PUT /api/auth/change-password
-// @desc    Change password for currently authenticated user
+// @desc    Change password for currently authenticated user/admin
 // @access  Private
 router.put('/change-password', protect, async (req, res, next) => {
   try {
@@ -325,8 +325,8 @@ router.put('/change-password', protect, async (req, res, next) => {
     const cleanCurrent = (currentPassword || '').trim();
     const cleanNew = (newPassword || '').trim();
 
-    if (!cleanCurrent || !cleanNew) {
-      return res.status(400).json({ success: false, error: 'Current password and new password are required' });
+    if (!cleanNew) {
+      return res.status(400).json({ success: false, error: 'New password is required' });
     }
 
     if (cleanNew.length < 6) {
@@ -338,9 +338,15 @@ router.put('/change-password', protect, async (req, res, next) => {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
 
-    const isMatch = await user.matchPassword(cleanCurrent);
-    if (!isMatch) {
-      return res.status(400).json({ success: false, error: 'Current password does not match. Please verify and try again.' });
+    // If currentPassword is provided, verify it.
+    // Non-admin roles must always verify current password.
+    if (cleanCurrent) {
+      const isMatch = await user.matchPassword(cleanCurrent);
+      if (!isMatch) {
+        return res.status(400).json({ success: false, error: 'Current password does not match. Please verify and try again.' });
+      }
+    } else if (user.role !== 'admin') {
+      return res.status(400).json({ success: false, error: 'Current password is required to change password' });
     }
 
     user.password = cleanNew;
