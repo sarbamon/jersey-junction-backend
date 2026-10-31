@@ -76,10 +76,12 @@ router.post('/', async (req, res, next) => {
     // Standardize permissions array
     const validPerms = Array.isArray(permissions) ? permissions.map((p) => p.toLowerCase().trim()) : [];
 
+    const cleanPassword = password.trim();
+
     const newEmployee = await User.create({
       name: cleanName,
       email: cleanEmail,
-      password,
+      password: cleanPassword,
       role: 'employee',
       employeeTitle: (employeeTitle || 'Staff Member').trim(),
       permissions: validPerms,
@@ -87,19 +89,16 @@ router.post('/', async (req, res, next) => {
       status: 'Active',
     });
 
-    // Send credentials and login portal email to the newly created employee
-    try {
-      await sendEmployeeWelcomeEmail({
-        name: cleanName,
-        email: cleanEmail,
-        password,
-        employeeTitle: (employeeTitle || 'Staff Member').trim(),
-        permissions: validPerms,
-      });
-      console.log(`[EMPLOYEE] Welcome email with password sent to ${cleanEmail}`);
-    } catch (mailErr) {
-      console.warn(`[EMPLOYEE] Failed to send credentials email to ${cleanEmail}:`, mailErr.message);
-    }
+    // Send credentials and login portal email in background (non-blocking)
+    sendEmployeeWelcomeEmail({
+      name: cleanName,
+      email: cleanEmail,
+      password: cleanPassword,
+      employeeTitle: (employeeTitle || 'Staff Member').trim(),
+      permissions: validPerms,
+    })
+      .then(() => console.log(`[EMPLOYEE] Welcome email with password delivered to ${cleanEmail}`))
+      .catch((mailErr) => console.warn(`[EMPLOYEE] Background email notice failed for ${cleanEmail}:`, mailErr.message));
 
     res.status(201).json({
       success: true,
@@ -161,18 +160,15 @@ router.put('/:id', async (req, res, next) => {
 
     await employee.save();
 
-    // If password was reset, notify the employee via email
+    // If password was reset, notify the employee via email in background (non-blocking)
     if (isPasswordReset) {
-      try {
-        await sendEmployeePasswordResetEmail({
-          name: employee.name,
-          email: employee.email,
-          newPassword: password.trim(),
-        });
-        console.log(`[EMPLOYEE] Password reset email sent to ${employee.email}`);
-      } catch (mailErr) {
-        console.warn(`[EMPLOYEE] Failed to send password reset email to ${employee.email}:`, mailErr.message);
-      }
+      sendEmployeePasswordResetEmail({
+        name: employee.name,
+        email: employee.email,
+        newPassword: password.trim(),
+      })
+        .then(() => console.log(`[EMPLOYEE] Password reset email sent to ${employee.email}`))
+        .catch((mailErr) => console.warn(`[EMPLOYEE] Failed to send password reset email to ${employee.email}:`, mailErr.message));
     }
 
     res.status(200).json({

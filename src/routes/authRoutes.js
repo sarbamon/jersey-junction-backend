@@ -49,20 +49,25 @@ router.post('/register', async (req, res, next) => {
     const cleanEmail = (email || '').toLowerCase().trim();
     const cleanName = (name || '').trim();
     const cleanPhone = (phone || '').trim();
+    const cleanPassword = (password || '').trim();
 
-    if (!cleanEmail || !password) {
+    if (!cleanEmail || !cleanPassword) {
       return res.status(400).json({ success: false, error: 'Email and password are required' });
+    }
+
+    if (cleanPassword.length < 6) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
     }
 
     const existingUser = await User.findOne({ email: cleanEmail });
     if (existingUser) {
-      return res.status(400).json({ success: false, error: 'Email already registered' });
+      return res.status(400).json({ success: false, error: 'An account with this email is already registered. Please sign in instead.' });
     }
 
     const user = await User.create({
       name: cleanName || cleanEmail.split('@')[0],
       email: cleanEmail,
-      password,
+      password: cleanPassword,
       phone: cleanPhone,
     });
 
@@ -84,6 +89,7 @@ router.post('/login', async (req, res, next) => {
     }
 
     const cleanEmail = (email || '').toLowerCase().trim();
+    const cleanPassword = (password || '').trim();
 
     // Find by exact lowercased email or case-insensitive regex fallback
     const user = await User.findOne({
@@ -94,12 +100,12 @@ router.post('/login', async (req, res, next) => {
     }).select('+password');
 
     if (!user) {
-      return res.status(401).json({ success: false, error: 'Invalid credentials' });
+      return res.status(401).json({ success: false, error: 'No account found with this email address' });
     }
 
-    const isMatch = await user.matchPassword(password);
+    const isMatch = await user.matchPassword(cleanPassword);
     if (!isMatch) {
-      return res.status(401).json({ success: false, error: 'Invalid credentials' });
+      return res.status(401).json({ success: false, error: 'Incorrect password. Please verify and try again.' });
     }
 
     if (user.isBanned || user.status === 'Banned') {
@@ -290,19 +296,59 @@ router.put('/users/:id/ban', protect, authorize('admin'), async (req, res, next)
 router.put('/users/:id/reset-password', protect, authorize('admin'), async (req, res, next) => {
   try {
     const { newPassword } = req.body;
-    if (!newPassword || newPassword.length < 6) {
+    const cleanPassword = (newPassword || '').trim();
+    if (!cleanPassword || cleanPassword.length < 6) {
       return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
     }
     const user = await User.findById(req.params.id);
     if (!user) {
       return res.status(404).json({ success: false, error: 'Customer not found' });
     }
-    user.password = newPassword;
+    user.password = cleanPassword;
     await user.save();
 
     res.status(200).json({
       success: true,
       message: `Password successfully updated for ${user.email}`,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// @route   PUT /api/auth/change-password
+// @desc    Change password for currently authenticated user
+// @access  Private
+router.put('/change-password', protect, async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const cleanCurrent = (currentPassword || '').trim();
+    const cleanNew = (newPassword || '').trim();
+
+    if (!cleanCurrent || !cleanNew) {
+      return res.status(400).json({ success: false, error: 'Current password and new password are required' });
+    }
+
+    if (cleanNew.length < 6) {
+      return res.status(400).json({ success: false, error: 'New password must be at least 6 characters' });
+    }
+
+    const user = await User.findById(req.user._id).select('+password');
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    const isMatch = await user.matchPassword(cleanCurrent);
+    if (!isMatch) {
+      return res.status(400).json({ success: false, error: 'Current password does not match. Please verify and try again.' });
+    }
+
+    user.password = cleanNew;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Password successfully changed! Your new password is now active.',
     });
   } catch (err) {
     next(err);
@@ -316,12 +362,13 @@ router.post('/reset-password', async (req, res, next) => {
   try {
     const { email, newPassword } = req.body;
     const cleanEmail = (email || '').toLowerCase().trim();
+    const cleanPassword = (newPassword || '').trim();
 
-    if (!cleanEmail || !newPassword) {
+    if (!cleanEmail || !cleanPassword) {
       return res.status(400).json({ success: false, error: 'Email and new password are required' });
     }
 
-    if (newPassword.length < 6) {
+    if (cleanPassword.length < 6) {
       return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
     }
 
@@ -340,7 +387,7 @@ router.post('/reset-password', async (req, res, next) => {
       return res.status(403).json({ success: false, error: 'This account is suspended. Please contact store support.' });
     }
 
-    user.password = newPassword;
+    user.password = cleanPassword;
     await user.save();
 
     res.status(200).json({
