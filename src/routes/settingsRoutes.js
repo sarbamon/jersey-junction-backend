@@ -14,7 +14,7 @@ const DEFAULT_SETTINGS = {
   freeShippingThreshold: 999,
   codEnabled: true,
   razorpayEnabled: true,
-  customJerseyPrice: 150,
+  customJerseyPrice: 250,
 };
 
 function readSettings() {
@@ -48,6 +48,8 @@ router.get('/', (req, res) => {
   });
 });
 
+let onSettingsUpdated = null;
+
 // POST or PUT /api/settings - Update store settings
 const updateHandler = (req, res) => {
   const current = readSettings();
@@ -61,10 +63,27 @@ const updateHandler = (req, res) => {
   if (typeof updates.codEnabled === 'boolean') {
     updated.codEnabled = updates.codEnabled;
   }
+  if (typeof updates.razorpayEnabled === 'boolean') {
+    updated.razorpayEnabled = updates.razorpayEnabled;
+  }
+  if (updates.customJerseyPrice !== undefined) {
+    const num = Number(updates.customJerseyPrice);
+    if (!isNaN(num)) {
+      updated.customJerseyPrice = Math.max(0, num);
+    }
+  }
 
   const success = writeSettings(updated);
   if (!success) {
     return res.status(500).json({ success: false, message: 'Failed to write store settings.' });
+  }
+
+  if (typeof onSettingsUpdated === 'function') {
+    try {
+      onSettingsUpdated(updated);
+    } catch (e) {
+      console.warn('[Settings] onSettingsUpdated callback notice:', e.message);
+    }
   }
 
   res.json({
@@ -77,5 +96,8 @@ const updateHandler = (req, res) => {
 router.post('/', updateHandler);
 router.put('/', updateHandler);
 router.readSettings = readSettings;
+router.setOnSettingsUpdated = (fn) => {
+  onSettingsUpdated = fn;
+};
 
 module.exports = router;

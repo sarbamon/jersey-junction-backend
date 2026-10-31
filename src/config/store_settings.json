@@ -7,7 +7,7 @@
   "freeShippingThreshold": 100000,
   "codEnabled": false,
   "razorpayEnabled": true,
-  "customJerseyPrice": 150,
+  "customJerseyPrice": 250,
   "expressShippingCharge": 100,
   "standardShippingCharge": 0
 }

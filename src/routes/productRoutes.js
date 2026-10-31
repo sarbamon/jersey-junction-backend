@@ -2,6 +2,7 @@ const express = require('express');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
 const { protect, authorize, authorizePermission } = require('../middleware/auth');
+const settingsRoutes = require('./settingsRoutes');
 
 const router = express.Router();
 
@@ -22,9 +23,26 @@ function invalidateProductCache() {
   setTimeout(prewarmProducts, 100);
 }
 
+// Invalidate products cache whenever store settings change
+if (typeof settingsRoutes.setOnSettingsUpdated === 'function') {
+  settingsRoutes.setOnSettingsUpdated(() => {
+    invalidateProductCache();
+  });
+}
+
 // Helper to sanitize product document for output
 const formatProduct = (p) => {
   const doc = p.toObject ? p.toObject() : p;
+  const storeSettings = typeof settingsRoutes.readSettings === 'function' ? settingsRoutes.readSettings() : null;
+  const globalCustomJerseyPrice = (typeof storeSettings?.customJerseyPrice === 'number' && storeSettings.customJerseyPrice >= 0)
+    ? storeSettings.customJerseyPrice
+    : 250;
+
+  let custPrice = doc.customizationPrice;
+  if (custPrice === undefined || custPrice === null || custPrice === 150) {
+    custPrice = globalCustomJerseyPrice;
+  }
+
   return {
     ...doc,
     id: doc._id ? doc._id.toString() : (doc.id || ''),
@@ -32,6 +50,7 @@ const formatProduct = (p) => {
     availableSizes: doc.availableSizes && doc.availableSizes.length ? doc.availableSizes : (doc.sizes || ['S', 'M', 'L', 'XL', '2XL']),
     sizeStock: doc.sizeStock || {},
     isCustomizable: Boolean(doc.isCustomizable),
+    customizationPrice: custPrice,
   };
 };
 
