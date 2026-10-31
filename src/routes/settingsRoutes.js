@@ -48,6 +48,39 @@ router.get('/', (req, res) => {
   });
 });
 
+// Active SSE clients for instant real-time settings broadcast
+const sseClients = new Set();
+
+// GET /api/settings/events - Real-time Server-Sent Events stream
+router.get('/events', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+    'X-Accel-Buffering': 'no',
+  });
+
+  const current = readSettings();
+  res.write(`data: ${JSON.stringify(current)}\n\n`);
+
+  sseClients.add(res);
+
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch (_) {
+      clearInterval(heartbeat);
+      sseClients.delete(res);
+    }
+  }, 15000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    sseClients.delete(res);
+  });
+});
+
 let onSettingsUpdated = null;
 
 // POST or PUT /api/settings - Update store settings
@@ -72,10 +105,43 @@ const updateHandler = (req, res) => {
       updated.customJerseyPrice = Math.max(0, num);
     }
   }
+  if (updates.expressShippingCharge !== undefined) {
+    const num = Number(updates.expressShippingCharge);
+    if (!isNaN(num)) {
+      updated.expressShippingCharge = Math.max(0, num);
+    }
+  }
+  if (updates.standardShippingCharge !== undefined) {
+    const num = Number(updates.standardShippingCharge);
+    if (!isNaN(num)) {
+      updated.standardShippingCharge = Math.max(0, num);
+    }
+  }
+  if (updates.shippingCharge !== undefined) {
+    const num = Number(updates.shippingCharge);
+    if (!isNaN(num)) {
+      updated.shippingCharge = Math.max(0, num);
+    }
+  }
+  if (updates.freeShippingThreshold !== undefined) {
+    const num = Number(updates.freeShippingThreshold);
+    if (!isNaN(num)) {
+      updated.freeShippingThreshold = Math.max(0, num);
+    }
+  }
 
   const success = writeSettings(updated);
   if (!success) {
     return res.status(500).json({ success: false, message: 'Failed to write store settings.' });
+  }
+
+  // Real-time broadcast to all connected storefront and admin clients
+  for (const client of sseClients) {
+    try {
+      client.write(`data: ${JSON.stringify(updated)}\n\n`);
+    } catch (_) {
+      sseClients.delete(client);
+    }
   }
 
   if (typeof onSettingsUpdated === 'function') {

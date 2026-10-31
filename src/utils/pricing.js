@@ -260,7 +260,9 @@ const calculateCartTotals = async ({ items, shippingMethod = 'standard', couponC
 
   if (verifiedItems.length > 0) {
     if (normalizedMethod === 'express') {
-      shippingFee = typeof settings.expressShippingCharge === 'number' ? settings.expressShippingCharge : 100;
+      shippingFee = typeof settings.expressShippingCharge === 'number'
+        ? settings.expressShippingCharge
+        : (typeof settings.shippingCharge === 'number' ? settings.shippingCharge : 100);
     } else {
       const freeThreshold = typeof settings.freeShippingThreshold === 'number' ? settings.freeShippingThreshold : 100000;
       if (subtotal >= freeThreshold) {
