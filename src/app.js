@@ -18,6 +18,7 @@ const icarryRoutes = require('./routes/icarryRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
 const couponRoutes = require('./routes/couponRoutes');
 const employeeRoutes = require('./routes/employeeRoutes');
+const contactRoutes = require('./routes/contactRoutes');
 
 const app = express();
 
@@ -131,6 +132,7 @@ app.use('/api/icarry', icarryRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/coupons', couponRoutes);
 app.use('/api/employees', employeeRoutes);
+app.use('/api/contact', contactRoutes);
 
 // Error handler middleware
 app.use(errorHandler);

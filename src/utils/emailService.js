@@ -71,7 +71,7 @@ const getTransporter = () => {
  * 2. Attempts Brevo REST HTTP API.
  * 3. Falls back to Hostinger SMTP (smtp.hostinger.com:465).
  */
-const dispatchEmail = async ({ to, customerName, subject, html }) => {
+const dispatchEmail = async ({ to, customerName, subject, html, replyTo }) => {
   const cleanEmail = (to || '').trim().toLowerCase();
   if (!cleanEmail) return { success: false, error: 'Recipient email required' };
 
@@ -83,6 +83,7 @@ const dispatchEmail = async ({ to, customerName, subject, html }) => {
   ).trim();
 
   const senderName = process.env.EMAIL_FROM_NAME || 'Jersey Junction';
+  const effectiveReplyTo = (replyTo || senderEmail).trim();
 
   // 1. Try Brevo SMTP Relay first if configured (works across cloud hosts without IP lock)
   const brevoTransporter = getBrevoSmtpTransporter();
@@ -90,7 +91,7 @@ const dispatchEmail = async ({ to, customerName, subject, html }) => {
     try {
       const info = await brevoTransporter.sendMail({
         from: `"${senderName}" <${senderEmail}>`,
-        replyTo: senderEmail,
+        replyTo: effectiveReplyTo,
         to: cleanEmail,
         subject,
         html,
@@ -122,7 +123,7 @@ const dispatchEmail = async ({ to, customerName, subject, html }) => {
         body: JSON.stringify({
           sender: { name: senderName, email: senderEmail },
           to: [{ email: cleanEmail, name: customerName || 'Customer' }],
-          replyTo: { email: senderEmail, name: senderName },
+          replyTo: { email: effectiveReplyTo, name: replyTo ? (customerName || 'Customer') : senderName },
           subject,
           htmlContent: html,
         }),
@@ -148,7 +149,7 @@ const dispatchEmail = async ({ to, customerName, subject, html }) => {
     try {
       const info = await transporter.sendMail({
         from: `"${senderName}" <${senderEmail}>`,
-        replyTo: senderEmail,
+        replyTo: effectiveReplyTo,
         to: cleanEmail,
         subject,
         html,
@@ -336,9 +337,98 @@ const sendOrderConfirmationOtp = async ({ email, otp, customerName }) => {
   });
 };
 
+/**
+ * Sends a contact inquiry message from customer to store support (support@jerseyjunction.shop).
+ */
+const sendContactInquiryEmail = async ({ name, email, orderNumber, subject, message }) => {
+  const supportEmail = 'support@jerseyjunction.shop';
+  const cleanCustomerName = (name || 'Customer').trim();
+  const cleanCustomerEmail = (email || '').trim().toLowerCase();
+  const cleanOrderNum = (orderNumber || '').trim();
+  const cleanSubject = (subject || 'General Inquiry').trim();
+  const cleanMessage = (message || '').trim().replace(/\n/g, '<br/>');
+
+  const emailSubject = `[Contact Us] ${cleanSubject} - ${cleanCustomerName}${cleanOrderNum ? ` (Order ${cleanOrderNum})` : ''}`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>New Customer Inquiry</title>
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0c10; color: #ffffff; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background: #121318; border: 1px solid #27272a; border-radius: 16px; overflow: hidden; }
+        .header { background: #000000; padding: 24px; border-bottom: 2px solid #f4c84a; text-align: center; }
+        .header h1 { margin: 0; font-size: 20px; font-weight: 900; color: #f4c84a; letter-spacing: 1px; text-transform: uppercase; }
+        .content { padding: 28px 24px; }
+        .meta-table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+        .meta-table td { padding: 8px 12px; border-bottom: 1px solid #1f2028; font-size: 13px; }
+        .meta-label { color: #a1a1aa; font-weight: bold; width: 140px; text-transform: uppercase; font-size: 11px; }
+        .meta-value { color: #ffffff; }
+        .message-box { background: #0b0c10; border: 1px solid #27272a; border-radius: 12px; padding: 18px; margin-top: 12px; font-size: 14px; line-height: 1.6; color: #e4e4e7; }
+        .footer { padding: 16px 24px; background: #0b0c10; text-align: center; font-size: 11px; color: #71717a; border-top: 1px solid #1f2028; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>New Customer Support Inquiry</h1>
+        </div>
+        <div class="content">
+          <p style="margin-top: 0; font-size: 14px; color: #d4d4d8;">A customer has submitted a message via the Jersey Junction Contact form:</p>
+          <table class="meta-table">
+            <tr>
+              <td class="meta-label">Customer Name</td>
+              <td class="meta-value"><strong>${cleanCustomerName}</strong></td>
+            </tr>
+            <tr>
+              <td class="meta-label">Customer Email</td>
+              <td class="meta-value"><a href="mailto:${cleanCustomerEmail}" style="color: #f4c84a; text-decoration: underline;">${cleanCustomerEmail}</a></td>
+            </tr>
+            ${cleanOrderNum ? `
+            <tr>
+              <td class="meta-label">Order Number</td>
+              <td class="meta-value"><strong>${cleanOrderNum}</strong></td>
+            </tr>` : ''}
+            <tr>
+              <td class="meta-label">Inquiry Subject</td>
+              <td class="meta-value">${cleanSubject}</td>
+            </tr>
+          </table>
+
+          <div style="font-size: 12px; text-transform: uppercase; font-weight: bold; color: #f4c84a; margin-top: 20px;">
+            Message Content:
+          </div>
+          <div class="message-box">
+            ${cleanMessage}
+          </div>
+
+          <div style="margin-top: 24px; text-align: center;">
+            <a href="mailto:${cleanCustomerEmail}?subject=Re: ${encodeURIComponent(emailSubject)}" style="display: inline-block; background: #f4c84a; color: #000000; font-weight: bold; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-size: 13px; text-transform: uppercase;">Reply to Customer</a>
+          </div>
+        </div>
+        <div class="footer">
+          Jersey Junction Store Support &bull; Delivered to ${supportEmail}
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return await dispatchEmail({
+    to: supportEmail,
+    customerName: 'Jersey Junction Support',
+    subject: emailSubject,
+    html,
+    replyTo: cleanCustomerEmail,
+  });
+};
+
 module.exports = {
   sendOrderConfirmationReceipt,
   sendOrderConfirmationOtp,
+  sendContactInquiryEmail,
   getTransporter,
   dispatchEmail,
 };
