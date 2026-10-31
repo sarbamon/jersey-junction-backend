@@ -43,9 +43,17 @@ const formatProduct = (p) => {
     custPrice = globalCustomJerseyPrice;
   }
 
+  const rawImage = String(doc.image || '').trim();
+  const cleanImage = rawImage.includes('/uploads/img_') ? '' : rawImage;
+  const cleanImages = Array.isArray(doc.images)
+    ? doc.images.map((img) => String(img || '').trim()).filter((img) => img && !img.includes('/uploads/img_'))
+    : [];
+
   return {
     ...doc,
     id: doc._id ? doc._id.toString() : (doc.id || ''),
+    image: cleanImage || (cleanImages[0] || ''),
+    images: cleanImages.length > 0 ? cleanImages : (cleanImage ? [cleanImage] : []),
     sizes: doc.sizes && doc.sizes.length ? doc.sizes : (doc.availableSizes || ['S', 'M', 'L', 'XL', '2XL']),
     availableSizes: doc.availableSizes && doc.availableSizes.length ? doc.availableSizes : (doc.sizes || ['S', 'M', 'L', 'XL', '2XL']),
     sizeStock: doc.sizeStock || {},

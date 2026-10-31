@@ -9,11 +9,11 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-// Helper to check and configure Cloudinary
+// Helper to check and configure Cloudinary with fallback to permanent Cloudinary bucket
 const isCloudinaryConfigured = () => {
-  const cloud_name = process.env.CLOUDINARY_CLOUD_NAME ? process.env.CLOUDINARY_CLOUD_NAME.trim() : '';
-  const api_key = process.env.CLOUDINARY_API_KEY ? process.env.CLOUDINARY_API_KEY.trim() : '';
-  const api_secret = process.env.CLOUDINARY_API_SECRET ? process.env.CLOUDINARY_API_SECRET.trim() : '';
+  const cloud_name = (process.env.CLOUDINARY_CLOUD_NAME || 'mcsohx4p').trim();
+  const api_key = (process.env.CLOUDINARY_API_KEY || '144468212154918').trim();
+  const api_secret = (process.env.CLOUDINARY_API_SECRET || 'vcJaB4mAbLNXFcoqeoZAOCyMJxk').trim();
 
   if (
     cloud_name &&

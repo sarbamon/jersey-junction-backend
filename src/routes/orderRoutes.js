@@ -16,7 +16,16 @@ const formatOrder = (order) => ({
   email: order.email,
   phone: order.phone,
   shippingAddress: order.shippingAddress,
-  items: order.items,
+  items: (order.items || []).map((item) => {
+    const raw = item.toObject ? item.toObject() : item;
+    const rawImg = String(raw.image || '').trim();
+    // Do not return ephemeral /uploads/ link that was wiped on container restart
+    const isEphemeral = rawImg.includes('/uploads/img_');
+    return {
+      ...raw,
+      image: isEphemeral ? '' : rawImg,
+    };
+  }),
   subtotal: order.subtotal,
   shippingFee: order.shippingFee,
   discountAmount: order.discountAmount,
