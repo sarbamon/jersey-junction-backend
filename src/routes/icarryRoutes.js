@@ -1035,7 +1035,7 @@ router.get('/track/:orderId', async (req, res) => {
     let edd = '';
     let pickedDateTime = '';
     let deliveredDateTime = '';
-    let externalTrackingUrl = trackingNumber ? `https://www.icarry.in/track-shipment&awb=${encodeURIComponent(trackingNumber)}` : '';
+    let externalTrackingUrl = '';
 
     // Check if we have shipment_id to query iCarry api_track_shipment
     let shipmentId = order.icarryShipmentId || '';
@@ -1085,28 +1085,37 @@ router.get('/track/:orderId', async (req, res) => {
       }
     }
 
+    // Helper to format courier internal statuses into clean customer status
+    const formatShippingStatus = (st) => {
+      if (!st || typeof st !== 'string') return 'Shipping getting ready';
+      if (/label\s*generated|manifest\s*generated|softdata\s*upload|shipment\s*created|pickup\s*scheduled/i.test(st)) {
+        return 'Shipping getting ready';
+      }
+      return st;
+    };
+
     // Transform iCarry live scan details into chronological milestone history
     let history = [];
     if (liveDetails.length > 0) {
       history = liveDetails.map((evt, idx) => ({
-        status: evt.notes || liveStatus,
+        status: formatShippingStatus(evt.notes || liveStatus),
         location: evt.location || 'In Transit Hub',
         timestamp: evt.datetime || new Date().toISOString(),
-        details: evt.notes || 'Status update logged by carrier network.',
+        details: formatShippingStatus(evt.notes || 'Status update logged by carrier network.'),
         done: true,
       }));
     } else {
       // Fallback timeline from local order booking state
       history = [
         {
-          status: 'Shipment Created & Booked',
+          status: 'Shipping getting ready',
           location: 'Origin Warehouse',
           timestamp: order.bookedAt || order.date || new Date().toISOString(),
-          details: `Consignment booked on iCarry.in network. Courier: ${liveCourier}, AWB: ${trackingNumber || 'Pending'}.`,
+          details: `Consignment booked on courier network. Courier: ${liveCourier}, AWB: ${trackingNumber || 'Pending'}.`,
           done: true,
         },
         {
-          status: liveStatus || 'Pickup Scheduled',
+          status: formatShippingStatus(liveStatus) || 'Shipping getting ready',
           location: 'Warehouse Hub',
           timestamp: new Date().toISOString(),
           details: 'Courier pickup scheduled with delivery partner rider.',
@@ -1122,13 +1131,13 @@ router.get('/track/:orderId', async (req, res) => {
         trackingNumber,
         shipmentId,
         courier: liveCourier,
-        shippingStatus: liveStatus,
+        shippingStatus: formatShippingStatus(liveStatus),
         orderStatus: order.orderStatus,
         destination: `${order.shippingAddress?.city || ''}, ${order.shippingAddress?.state || ''} - ${order.shippingAddress?.pincode || ''}`,
         edd,
         pickedDateTime,
         deliveredDateTime,
-        externalTrackingUrl,
+        externalTrackingUrl: '', // Stripped to keep customer on site
         rawDetails: liveDetails,
         history,
       },
