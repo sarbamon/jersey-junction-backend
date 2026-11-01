@@ -1,13 +1,13 @@
 const express = require('express');
 const User = require('../models/User');
-const { protect, authorize } = require('../middleware/auth');
+const { protect, authorizePermission } = require('../middleware/auth');
 const { sendEmployeeWelcomeEmail, sendEmployeePasswordResetEmail } = require('../utils/emailService');
 
 const router = express.Router();
 
-// Only Boss / Admin can manage employees
+// Boss / Admin or staff with 'employees' permission can manage employees
 router.use(protect);
-router.use(authorize('admin'));
+router.use(authorizePermission('employees'));
 
 // @route   GET /api/employees
 // @desc    Get all employees with their permissions and titles
