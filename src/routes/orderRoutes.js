@@ -48,15 +48,22 @@ const formatOrder = (order) => ({
 const paymentRouter = require('./paymentRoutes');
 const reconcileRazorpayOrder = (order) => paymentRouter.reconcileRazorpayOrder ? paymentRouter.reconcileRazorpayOrder(order) : order;
 
-// Helper to determine if an order is confirmed/paid:
+// Helper to determine if an order is confirmed / valid to display:
 // 1. All Cash on Delivery (COD) orders
 // 2. Orders that have completed payment (paymentStatus === 'Paid')
-// Excludes uncompleted payment portal attempts where user opened Razorpay but did not pay.
+// 3. Any order that has moved beyond initial pending payment (Confirmed, Processing, Shipped, Delivered, Cancelled)
+// Excludes ONLY abandoned payment portal sessions where user opened Razorpay popup but aborted without paying.
 const isOrderConfirmed = (order) => {
   if (!order) return false;
-  const isCOD = order.paymentMethod === 'Cash on Delivery' || order.paymentMethod === 'COD';
-  const isPaid = order.paymentStatus === 'Paid';
-  return isCOD || isPaid;
+  const payMethod = String(order.paymentMethod || '').toLowerCase();
+  const payStatus = String(order.paymentStatus || '').toLowerCase();
+  const ordStatus = String(order.orderStatus || '').toLowerCase();
+
+  const isPaid = payStatus === 'paid';
+  const isCOD = payMethod.includes('cod') || payMethod.includes('cash on delivery') || payStatus === 'cod';
+  const isProcessed = ordStatus !== '' && ordStatus !== 'pending';
+
+  return isPaid || isCOD || isProcessed;
 };
 
 // GET /api/orders - Get all orders (Admin or Orders Employee)
@@ -88,20 +95,44 @@ router.get('/', protect, authorizePermission('orders'), async (req, res, next) =
   }
 });
 
-// GET /api/orders/user/:email - Get orders by user email (Owner or Admin only)
+// GET /api/orders/user/:email - Get orders by user email or phone (Owner, Admin, or Staff)
 router.get('/user/:email', protect, async (req, res, next) => {
   try {
-    const requestedEmail = req.params.email.toLowerCase().trim();
+    const requestedEmail = (req.params.email || '').toLowerCase().trim();
+    const queryPhone = (req.query.phone || '').trim().replace(/\D/g, '');
+    const userRole = req.user?.role;
+    const userEmail = (req.user?.email || '').toLowerCase().trim();
+    const userPhone = (req.user?.phone || '').trim().replace(/\D/g, '');
 
-    // Enforce authorization: user can only query their own orders unless they are an admin
-    if (req.user.role !== 'admin' && req.user.email.toLowerCase() !== requestedEmail) {
+    // Authorization: Admin or Employee can query any customer orders.
+    // Regular customer can query if requested email matches login email or matching phone.
+    const isStaff = userRole === 'admin' || userRole === 'employee';
+    const isOwner = userEmail === requestedEmail || (userPhone && queryPhone && userPhone === queryPhone);
+
+    if (!isStaff && !isOwner) {
       return res.status(403).json({
         success: false,
         error: 'Not authorized to view another customer\'s orders',
       });
     }
 
-    const orders = await Order.find({ email: requestedEmail }).sort({ createdAt: -1 });
+    // Build flexible query matching email (case-insensitive)
+    const safeRegex = new RegExp(`^${requestedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+    const searchConditions = [
+      { email: safeRegex },
+      { 'shippingAddress.email': safeRegex },
+    ];
+
+    // If user has a registered phone or passed phone parameter, also link orders by phone
+    const activePhone = queryPhone || userPhone;
+    if (activePhone && activePhone.length >= 7) {
+      const phoneDigits = activePhone.slice(-10);
+      const phoneRegex = new RegExp(`${phoneDigits}$`);
+      searchConditions.push({ phone: phoneRegex });
+      searchConditions.push({ 'shippingAddress.phone': phoneRegex });
+    }
+
+    const orders = await Order.find({ $or: searchConditions }).sort({ createdAt: -1 });
 
     // Auto-reconcile pending Razorpay orders with Razorpay API
     const reconciled = await Promise.all(
@@ -113,7 +144,7 @@ router.get('/user/:email', protect, async (req, res, next) => {
       })
     );
 
-    // Only show confirmed orders to customer
+    // Only show valid/confirmed orders to customer (exclude abandoned checkout sessions)
     const confirmedOrders = reconciled.filter(isOrderConfirmed);
 
     res.status(200).json({

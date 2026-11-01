@@ -406,6 +406,41 @@ router.post('/reset-password', async (req, res, next) => {
 });
 
 // @route   GET /api/auth/me
+// @desc    Update user profile (name, phone)
+// @access  Private
+router.put('/profile', protect, async (req, res, next) => {
+  try {
+    const { name, phone } = req.body;
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    if (typeof name === 'string' && name.trim()) {
+      user.name = name.trim();
+    }
+    if (typeof phone === 'string') {
+      user.phone = phone.trim();
+    }
+
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Profile updated successfully',
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        phone: user.phone || '',
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // @desc    Get currently logged in user profile & permissions
 // @access  Private
 router.get('/me', protect, async (req, res) => {
