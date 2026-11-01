@@ -68,6 +68,10 @@ userSchema.pre('save', async function () {
   if (typeof this.password === 'string') {
     this.password = this.password.trim();
   }
+  // If already an encrypted bcrypt hash, do not double-hash
+  if (typeof this.password === 'string' && /^\$2[abxy]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(this.password)) {
+    return;
+  }
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
 });

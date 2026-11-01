@@ -338,6 +338,73 @@ const sendOrderConfirmationOtp = async ({ email, otp, customerName }) => {
 };
 
 /**
+ * Sends a 6-digit email verification code to customer during signup.
+ */
+const sendSignupVerificationOtpEmail = async ({ email, name, otp }) => {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanEmail) return { success: false, error: 'Recipient email required' };
+
+  const cleanName = (name || cleanEmail.split('@')[0] || 'Customer').trim();
+  const subject = `${otp} is your Jersey Junction verification code`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Verify Your Email - Jersey Junction</title>
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #08080a; color: #ffffff; margin: 0; padding: 20px; }
+        .container { max-width: 520px; margin: 0 auto; background: #121318; border: 1px solid #27272a; border-radius: 16px; overflow: hidden; }
+        .header { background: #000000; padding: 28px 24px; border-bottom: 2px solid #f4c84a; text-align: center; }
+        .header h1 { margin: 0; font-size: 22px; font-weight: 900; color: #f4c84a; letter-spacing: 2px; text-transform: uppercase; }
+        .content { padding: 32px 24px; text-align: center; }
+        .welcome { font-size: 15px; color: #e4e4e7; line-height: 1.6; margin: 0 0 20px 0; }
+        .otp-box { background: #000000; border: 2px dashed #f4c84a; border-radius: 14px; padding: 22px 16px; margin: 24px auto; max-width: 280px; }
+        .otp-label { font-size: 11px; font-weight: 800; color: #a1a1aa; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 8px; }
+        .otp-code { font-family: 'Courier New', Courier, monospace; font-size: 38px; font-weight: 900; letter-spacing: 10px; color: #f4c84a; padding-left: 10px; }
+        .validity { font-size: 12px; color: #71717a; margin-top: 16px; }
+        .notice { font-size: 12px; color: #a1a1aa; line-height: 1.5; background: #1a1a1e; border-radius: 8px; padding: 12px; margin-top: 24px; }
+        .footer { padding: 18px 24px; background: #000000; text-align: center; font-size: 11px; color: #71717a; border-top: 1px solid #27272a; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>Jersey Junction</h1>
+          <p style="margin: 6px 0 0; font-size: 11px; color: #a1a1aa; text-transform: uppercase; letter-spacing: 1.5px;">Account Verification</p>
+        </div>
+        <div class="content">
+          <p class="welcome">
+            Hello <strong>${cleanName}</strong>,<br/>
+            Thank you for creating an account with Jersey Junction. Please enter the verification code below to verify your email address and activate your account:
+          </p>
+          <div class="otp-box">
+            <div class="otp-label">Verification Code</div>
+            <div class="otp-code">${otp}</div>
+          </div>
+          <p class="validity">This code is valid for <strong>10 minutes</strong>. Do not share this code with anyone.</p>
+          <div class="notice">
+            If you did not request this verification code, please ignore this email.
+          </div>
+        </div>
+        <div class="footer">
+          &copy; ${new Date().getFullYear()} Jersey Junction &bull; All Rights Reserved
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return await dispatchEmail({
+    to: cleanEmail,
+    customerName: cleanName,
+    subject,
+    html,
+  });
+};
+
+/**
  * Sends a contact inquiry message from customer to store support (support@jerseyjunction.shop).
  */
 const sendContactInquiryEmail = async ({ name, email, orderNumber, subject, message }) => {
@@ -608,6 +675,7 @@ const sendEmployeePasswordResetEmail = async ({ name, email, newPassword }) => {
 module.exports = {
   sendOrderConfirmationReceipt,
   sendOrderConfirmationOtp,
+  sendSignupVerificationOtpEmail,
   sendContactInquiryEmail,
   sendEmployeeWelcomeEmail,
   sendEmployeePasswordResetEmail,

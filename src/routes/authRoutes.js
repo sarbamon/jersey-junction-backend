@@ -1,7 +1,10 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const User = require('../models/User');
+const SignupOtp = require('../models/SignupOtp');
 const { protect, authorize } = require('../middleware/auth');
+const { sendSignupVerificationOtpEmail } = require('../utils/emailService');
 
 const router = express.Router();
 
@@ -39,6 +42,173 @@ const sendTokenResponse = (user, statusCode, res) => {
       },
     });
 };
+
+// @route   POST /api/auth/register-send-otp
+// @desc    Initiate registration by generating a 6-digit verification code and emailing it to the customer
+// @access  Public
+router.post('/register-send-otp', async (req, res, next) => {
+  try {
+    const { name, email, password, phone } = req.body;
+    const cleanEmail = (email || '').toLowerCase().trim();
+    const cleanName = (name || '').trim();
+    const cleanPhone = (phone || '').trim();
+    const cleanPassword = (password || '').trim();
+
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return res.status(400).json({ success: false, error: 'A valid email address is required.' });
+    }
+
+    if (!cleanPassword || cleanPassword.length < 6) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 6 characters long.' });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({
+      $or: [
+        { email: cleanEmail },
+        { email: new RegExp(`^${cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+      ],
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        error: 'An account with this email is already registered. Please sign in instead.',
+      });
+    }
+
+    // Generate 6-digit numeric OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Securely pre-hash password so plaintext is never saved in DB
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(cleanPassword, salt);
+
+    // Upsert pending signup record (TTL 10 mins)
+    await SignupOtp.deleteMany({ email: cleanEmail });
+    await SignupOtp.create({
+      email: cleanEmail,
+      name: cleanName || cleanEmail.split('@')[0],
+      phone: cleanPhone,
+      passwordHash,
+      otp,
+    });
+
+    // Send the verification code via email
+    await sendSignupVerificationOtpEmail({
+      email: cleanEmail,
+      name: cleanName,
+      otp,
+    });
+
+    console.log(`[AUTH] 6-digit OTP verification email dispatched to ${cleanEmail}`);
+
+    return res.status(200).json({
+      success: true,
+      message: `A 6-digit verification code has been sent to ${cleanEmail}. Please enter it to complete registration.`,
+    });
+  } catch (err) {
+    console.error('Error sending registration OTP:', err);
+    next(err);
+  }
+});
+
+// @route   POST /api/auth/register-verify-otp
+// @desc    Verify 6-digit code and create customer account
+// @access  Public
+router.post('/register-verify-otp', async (req, res, next) => {
+  try {
+    const { email, otp } = req.body;
+    const cleanEmail = (email || '').toLowerCase().trim();
+    const cleanOtp = (otp || '').toString().trim();
+
+    if (!cleanEmail || !cleanOtp) {
+      return res.status(400).json({ success: false, error: 'Email and 6-digit verification code are required.' });
+    }
+
+    const pending = await SignupOtp.findOne({ email: cleanEmail });
+    if (!pending) {
+      return res.status(400).json({
+        success: false,
+        error: 'Verification code has expired or was not requested. Please try signing up again.',
+      });
+    }
+
+    if (pending.otp !== cleanOtp) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid verification code. Please check your email and try again.',
+      });
+    }
+
+    // Final safety check for existing email
+    const existingUser = await User.findOne({ email: cleanEmail });
+    if (existingUser) {
+      await SignupOtp.deleteMany({ email: cleanEmail });
+      return res.status(400).json({
+        success: false,
+        error: 'An account with this email is already registered. Please sign in instead.',
+      });
+    }
+
+    // Create user in database with verified status
+    const user = await User.create({
+      name: pending.name || cleanEmail.split('@')[0],
+      email: cleanEmail,
+      password: pending.passwordHash,
+      phone: pending.phone || '',
+    });
+
+    // Delete OTP record after successful registration
+    await SignupOtp.deleteMany({ email: cleanEmail });
+
+    console.log(`[AUTH] User verified and registered: ${cleanEmail}`);
+    sendTokenResponse(user, 201, res);
+  } catch (err) {
+    console.error('Error verifying registration OTP:', err);
+    next(err);
+  }
+});
+
+// @route   POST /api/auth/register-resend-otp
+// @desc    Resend a new 6-digit code to pending signup email
+// @access  Public
+router.post('/register-resend-otp', async (req, res, next) => {
+  try {
+    const { email } = req.body;
+    const cleanEmail = (email || '').toLowerCase().trim();
+
+    if (!cleanEmail) {
+      return res.status(400).json({ success: false, error: 'Email address is required.' });
+    }
+
+    const pending = await SignupOtp.findOne({ email: cleanEmail });
+    if (!pending) {
+      return res.status(400).json({
+        success: false,
+        error: 'No pending registration found for this email. Please fill out the sign up form again.',
+      });
+    }
+
+    const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
+    pending.otp = newOtp;
+    pending.createdAt = new Date();
+    await pending.save();
+
+    await sendSignupVerificationOtpEmail({
+      email: cleanEmail,
+      name: pending.name,
+      otp: newOtp,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `A new 6-digit verification code has been sent to ${cleanEmail}.`,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // @route   POST /api/auth/register
 // @desc    Register user
