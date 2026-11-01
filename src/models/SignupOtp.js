@@ -39,3 +39,4 @@ const signupOtpSchema = new mongoose.Schema(
 );
 
 module.exports = mongoose.model('SignupOtp', signupOtpSchema);
+
