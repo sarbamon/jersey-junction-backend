@@ -16,6 +16,18 @@ const DEFAULT_SETTINGS = {
   codEnabled: true,
   razorpayEnabled: true,
   customJerseyPrice: 250,
+  sizeChartImage: '',
+  midBannerImage: '',
+  midBannerTag: 'AUTHENTIC COLLECTION',
+  midBannerTitle: 'REPRESENT YOUR CLUB.',
+  midBannerSubtitle: 'WEAR YOUR COLORS.',
+  midBannerOverlayTag: '',
+  midBannerOverlayTitle: '',
+  socials: {
+    instagram: '',
+    facebook: '',
+    youtube: '',
+  },
 };
 
 function readSettings() {
@@ -129,6 +141,33 @@ const updateHandler = (req, res) => {
     if (!isNaN(num)) {
       updated.freeShippingThreshold = Math.max(0, num);
     }
+  }
+  if (updates.sizeChartImage !== undefined) {
+    updated.sizeChartImage = typeof updates.sizeChartImage === 'string' ? updates.sizeChartImage.trim() : '';
+  }
+  if (updates.midBannerImage !== undefined) {
+    updated.midBannerImage = typeof updates.midBannerImage === 'string' ? updates.midBannerImage.trim() : '';
+  }
+  if (updates.midBannerTag !== undefined) {
+    updated.midBannerTag = updates.midBannerTag;
+  }
+  if (updates.midBannerTitle !== undefined) {
+    updated.midBannerTitle = updates.midBannerTitle;
+  }
+  if (updates.midBannerSubtitle !== undefined) {
+    updated.midBannerSubtitle = updates.midBannerSubtitle;
+  }
+  if (updates.midBannerOverlayTag !== undefined) {
+    updated.midBannerOverlayTag = updates.midBannerOverlayTag;
+  }
+  if (updates.midBannerOverlayTitle !== undefined) {
+    updated.midBannerOverlayTitle = updates.midBannerOverlayTitle;
+  }
+  if (updates.socials && typeof updates.socials === 'object') {
+    updated.socials = {
+      ...(current.socials || {}),
+      ...updates.socials,
+    };
   }
 
   const success = writeSettings(updated);

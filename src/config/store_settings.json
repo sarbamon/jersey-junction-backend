@@ -10,5 +10,6 @@
   "customJerseyPrice": 250,
   "storeWhatsapp": "+91 60011 42358",
   "expressShippingCharge": 100,
-  "standardShippingCharge": 0
+  "standardShippingCharge": 0,
+  "sizeChartImage": ""
 }
