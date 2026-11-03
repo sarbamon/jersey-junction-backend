@@ -386,8 +386,8 @@ router.post('/estimate', async (req, res) => {
     const {
       originPincode,
       destinationPincode,
-      weight = 0.4,
-      dimensions = { length: 25, breadth: 20, height: 3 }
+      weight = 0.5,
+      dimensions = { length: 25, breadth: 10, height: 9.2 }
     } = req.body;
 
     if (!destinationPincode) {
@@ -431,8 +431,8 @@ router.post('/estimate', async (req, res) => {
       destination_pincode: String(destinationPincode),
       weight: String(weightInGrams),
       length: String(dimensions.length || 25),
-      breadth: String(dimensions.breadth || 20),
-      height: String(dimensions.height || 3),
+      breadth: String(dimensions.breadth || 10),
+      height: String(dimensions.height || 9.2),
       origin_country_code: 'IN',
       destination_country_code: 'IN',
       country_code: 'IN',
@@ -510,8 +510,8 @@ router.post('/estimate', async (req, res) => {
             destination_pincode: String(destinationPincode),
             weight: weightInGrams,
             length: dimensions.length || 25,
-            breadth: dimensions.breadth || 20,
-            height: dimensions.height || 3,
+            breadth: dimensions.breadth || 10,
+            height: dimensions.height || 9.2,
             origin_country_code: 'IN',
             destination_country_code: 'IN',
             shipment_mode: (req.body.mode && req.body.mode.toLowerCase() === 'air') ? 'A' : 'S',
@@ -785,8 +785,8 @@ router.post('/book', async (req, res) => {
       orderId,
       courierName = 'Delhivery Surface',
       courierId,
-      weight = 400,
-      dimensions = { length: 25, breadth: 20, height: 3 },
+      weight = 500,
+      dimensions = { length: 25, breadth: 10, height: 9.2 },
       pickupAddress,
       customNote,
       mode = 'Surface',
@@ -845,8 +845,8 @@ router.post('/book', async (req, res) => {
     );
 
     const parcelWeightGrams = Number(weight) > 20 ? Math.round(Number(weight)) : Math.round(Number(weight) * 1000);
-    const invoiceVal = Math.max(1, Math.round(Number(req.body.invoiceValue || order.totalAmount || 1000)));
-    const parcelDesc = req.body.parcelContents || `Football Jersey Kits (${order.items?.length || 1} items)`;
+    const invoiceVal = Math.max(1, Math.round(Number(req.body.invoiceValue || order.totalAmount || 0)));
+    const parcelDesc = req.body.parcelContents || 'Jersey';
 
     // Determine booking endpoint based on mode
     const isAir = String(mode).toLowerCase() === 'air' || String(mode).toLowerCase() === 'a';
@@ -883,8 +883,8 @@ router.post('/book', async (req, res) => {
 
     // Dimensions
     bookingParams.append('parcel[dimensions][length]', String(dimensions.length || 25));
-    bookingParams.append('parcel[dimensions][breadth]', String(dimensions.breadth || 20));
-    bookingParams.append('parcel[dimensions][height]', String(dimensions.height || 3));
+    bookingParams.append('parcel[dimensions][breadth]', String(dimensions.breadth || 10));
+    bookingParams.append('parcel[dimensions][height]', String(dimensions.height || 9.2));
     bookingParams.append('parcel[dimensions][unit]', 'cm');
 
     // Weight in grams
