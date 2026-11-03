@@ -206,6 +206,8 @@ router.post('/send-otp', async (req, res, next) => {
     if (registeredCustomer && (registeredCustomer.isBanned || registeredCustomer.status === 'Banned')) {
       return res.status(403).json({
         success: false,
+        isBanned: true,
+        error: `Account Suspended: ${registeredCustomer.banReason || 'Your account has been suspended by store administration'}. You cannot place orders.`,
         message: `Account Suspended: ${registeredCustomer.banReason || 'Your account has been suspended by store administration'}. You cannot place orders.`,
       });
     }
@@ -326,6 +328,8 @@ router.post('/', async (req, res, next) => {
     if (registeredUser.isBanned || registeredUser.status === 'Banned') {
       return res.status(403).json({
         success: false,
+        isBanned: true,
+        error: `Account Suspended: ${registeredUser.banReason || 'Your account has been suspended by store administration'}. You cannot place orders.`,
         message: `Account Suspended: ${registeredUser.banReason || 'Your account has been suspended by store administration'}. You cannot place orders.`,
       });
     }

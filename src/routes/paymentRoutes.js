@@ -87,6 +87,8 @@ router.post('/create-order', async (req, res) => {
       if (registeredUser.isBanned || registeredUser.status === 'Banned') {
         return res.status(403).json({
           success: false,
+          isBanned: true,
+          error: `Account Suspended: ${registeredUser.banReason || 'Your account has been suspended by store administration'}. You cannot place orders.`,
           message: `Account Suspended: ${registeredUser.banReason || 'Your account has been suspended by store administration'}. You cannot place orders.`,
         });
       }
