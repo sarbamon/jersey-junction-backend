@@ -24,6 +24,18 @@ exports.protect = async (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({ success: false, error: 'User no longer exists' });
     }
+
+    // Immediately reject banned accounts across all protected endpoints
+    if (req.user.role !== 'admin' && (req.user.isBanned || req.user.status === 'Banned')) {
+      return res.status(403).json({
+        success: false,
+        isBanned: true,
+        error: req.user.banReason
+          ? `Account Suspended: ${req.user.banReason}. Please contact support.`
+          : 'Your account has been suspended by store administration. Please contact support.',
+      });
+    }
+
     next();
   } catch (err) {
     return res.status(401).json({ success: false, error: 'Not authorized to access this route' });

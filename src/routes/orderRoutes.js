@@ -201,6 +201,15 @@ router.post('/send-otp', async (req, res, next) => {
       });
     }
 
+    // Check if customer account is banned
+    const registeredCustomer = await User.findOne({ email: normalizedEmail });
+    if (registeredCustomer && (registeredCustomer.isBanned || registeredCustomer.status === 'Banned')) {
+      return res.status(403).json({
+        success: false,
+        message: `Account Suspended: ${registeredCustomer.banReason || 'Your account has been suspended by store administration'}. You cannot place orders.`,
+      });
+    }
+
     // Generate cryptographically secure 6-digit numeric OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
@@ -311,6 +320,13 @@ router.post('/', async (req, res, next) => {
       return res.status(401).json({
         success: false,
         message: 'Account required. Please sign in or register an account to place an order.',
+      });
+    }
+
+    if (registeredUser.isBanned || registeredUser.status === 'Banned') {
+      return res.status(403).json({
+        success: false,
+        message: `Account Suspended: ${registeredUser.banReason || 'Your account has been suspended by store administration'}. You cannot place orders.`,
       });
     }
 

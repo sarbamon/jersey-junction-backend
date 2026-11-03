@@ -84,6 +84,12 @@ router.post('/create-order', async (req, res) => {
           message: 'Account required. Please sign in or register to place an order.',
         });
       }
+      if (registeredUser.isBanned || registeredUser.status === 'Banned') {
+        return res.status(403).json({
+          success: false,
+          message: `Account Suspended: ${registeredUser.banReason || 'Your account has been suspended by store administration'}. You cannot place orders.`,
+        });
+      }
     }
 
     // Backend authoritative calculation

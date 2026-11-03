@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
@@ -432,7 +433,15 @@ router.get('/users', protect, authorize('admin'), async (req, res, next) => {
 router.put('/users/:id/ban', protect, authorize('admin'), async (req, res, next) => {
   try {
     const { isBanned, reason } = req.body;
-    const user = await User.findById(req.params.id);
+    const rawId = String(req.params.id || '').trim();
+    let user = null;
+    if (mongoose.Types.ObjectId.isValid(rawId)) {
+      user = await User.findById(rawId);
+    }
+    if (!user) {
+      user = await User.findOne({ email: rawId.toLowerCase() });
+    }
+
     if (!user) {
       return res.status(404).json({ success: false, error: 'Customer not found' });
     }
@@ -470,7 +479,15 @@ router.put('/users/:id/reset-password', protect, authorize('admin'), async (req,
     if (!cleanPassword || cleanPassword.length < 6) {
       return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
     }
-    const user = await User.findById(req.params.id);
+    const rawId = String(req.params.id || '').trim();
+    let user = null;
+    if (mongoose.Types.ObjectId.isValid(rawId)) {
+      user = await User.findById(rawId);
+    }
+    if (!user) {
+      user = await User.findOne({ email: rawId.toLowerCase() });
+    }
+
     if (!user) {
       return res.status(404).json({ success: false, error: 'Customer not found' });
     }
