@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const fs = require('fs');
 const path = require('path');
+const mongoose = require('mongoose');
 const Order = require('../models/Order');
 
 // Persistent settings path for iCarry configuration
@@ -214,7 +215,8 @@ async function executeICarryPost(endpointUrl, paramsBody, config, attempts = 2) 
     return { success: false, error: session.error || 'Authentication failed', rawText: '', data: null };
   }
 
-  const urlWithToken = `${endpointUrl}&api_token=${encodeURIComponent(session.token)}`;
+  const sep = endpointUrl.includes('?') ? '&' : '?';
+  const urlWithToken = `${endpointUrl}${sep}api_token=${encodeURIComponent(session.token)}`;
   const response = await fetch(urlWithToken, {
     method: 'POST',
     headers: {
@@ -280,17 +282,17 @@ router.post('/config', (req, res) => {
   const updated = {
     ...current,
     ...req.body,
-    apiKey: req.body.apiKey !== undefined && req.body.apiKey.trim() !== '' 
-      ? req.body.apiKey.trim() 
+    apiKey: req.body.apiKey !== undefined && req.body.apiKey.trim() !== ''
+      ? req.body.apiKey.trim()
       : (req.body.apiToken || current.apiKey || current.apiToken),
-    apiToken: req.body.apiToken !== undefined && req.body.apiToken.trim() !== '' 
-      ? req.body.apiToken.trim() 
+    apiToken: req.body.apiToken !== undefined && req.body.apiToken.trim() !== ''
+      ? req.body.apiToken.trim()
       : (req.body.apiKey || current.apiToken),
-    apiUsername: req.body.apiUsername !== undefined 
-      ? req.body.apiUsername.trim() 
+    apiUsername: req.body.apiUsername !== undefined
+      ? req.body.apiUsername.trim()
       : current.apiUsername,
-    pickupAddressId: req.body.pickupAddressId !== undefined 
-      ? req.body.pickupAddressId.trim() 
+    pickupAddressId: req.body.pickupAddressId !== undefined
+      ? req.body.pickupAddressId.trim()
       : current.pickupAddressId,
     senderName: req.body.senderName !== undefined ? req.body.senderName.trim() : current.senderName,
     senderPhone: req.body.senderPhone !== undefined ? req.body.senderPhone.trim() : current.senderPhone,
@@ -331,9 +333,9 @@ router.get('/pickup-addresses', async (req, res) => {
 
     const token = session.token;
     const endpoints = [
-      `https://www.icarry.in/api_pickup_addresses&api_token=${encodeURIComponent(token)}`,
-      `https://www.icarry.in/api_get_pickup_addresses&api_token=${encodeURIComponent(token)}`,
-      `https://www.icarry.in/api_get_warehouses&api_token=${encodeURIComponent(token)}`,
+      `https://www.icarry.in/api_pickup_addresses?api_token=${encodeURIComponent(token)}`,
+      `https://www.icarry.in/api_get_pickup_addresses?api_token=${encodeURIComponent(token)}`,
+      `https://www.icarry.in/api_get_warehouses?api_token=${encodeURIComponent(token)}`,
     ];
 
     for (const ep of endpoints) {
@@ -356,7 +358,22 @@ router.get('/pickup-addresses', async (req, res) => {
       }
     }
 
-    res.status(200).json({ success: true, addresses: [] });
+    // Fallback to configured default pickup warehouse
+    const defaultWarehouse = [{
+      id: config.pickupAddressId || '103215',
+      pickupAddressId: config.pickupAddressId || '103215',
+      addressId: config.pickupAddressId || '103215',
+      name: config.senderName || 'SUFI',
+      company_name: config.senderCompany || 'Jersey Junction',
+      pincode: config.senderPincode || '400052',
+      address: config.senderAddress || 'Shop No 1, Main Road',
+      city: config.senderCity || 'Mumbai',
+      state: config.senderState || 'Maharashtra',
+      phone: config.senderPhone || '',
+      isDefault: true,
+    }];
+
+    res.status(200).json({ success: true, addresses: defaultWarehouse });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -366,9 +383,9 @@ router.get('/pickup-addresses', async (req, res) => {
 router.post('/estimate', async (req, res) => {
   try {
     const config = getICarryConfig();
-    const { 
-      originPincode, 
-      destinationPincode, 
+    const {
+      originPincode,
+      destinationPincode,
       weight = 0.4,
       dimensions = { length: 25, breadth: 20, height: 3 }
     } = req.body;
@@ -380,8 +397,8 @@ router.post('/estimate', async (req, res) => {
     const effectiveOriginPincode = String(originPincode || req.body.originPincode || config.senderPincode || '').trim();
 
     if (!effectiveOriginPincode) {
-      return res.status(400).json({ 
-        success: false, 
+      return res.status(400).json({
+        success: false,
         message: 'Origin pickup pincode is required. Please specify your origin pincode before estimating.',
         couriers: []
       });
@@ -389,8 +406,8 @@ router.post('/estimate', async (req, res) => {
 
     const session = await getActiveSession(config);
     if (!session.token) {
-      return res.status(400).json({ 
-        success: false, 
+      return res.status(400).json({
+        success: false,
         message: session.error || 'iCarry API credentials missing. Please configure your API key & username.',
         needsConfig: true,
         couriers: []
@@ -438,7 +455,7 @@ router.post('/estimate', async (req, res) => {
     let lastEstimateError = '';
 
     try {
-      const response = await fetch(`https://www.icarry.in/api_get_estimate&api_token=${encodeURIComponent(token)}`, {
+      const response = await fetch(`https://www.icarry.in/api_get_estimate?api_token=${encodeURIComponent(token)}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -482,7 +499,7 @@ router.post('/estimate', async (req, res) => {
     // Attempt 2: JSON payload if form-urlencoded didn't return couriers
     if (liveCouriers.length === 0 && !lastEstimateError) {
       try {
-        const responseJson = await fetch(`https://www.icarry.in/api_get_estimate&api_token=${encodeURIComponent(token)}`, {
+        const responseJson = await fetch(`https://www.icarry.in/api_get_estimate?api_token=${encodeURIComponent(token)}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -603,7 +620,7 @@ const handleCheckPincode = async (req, res) => {
             origin_pincode: String(effectiveOriginPincode),
             pickup_pincode: String(effectiveOriginPincode),
             destination_pincode: String(pincode),
-            weight: '400',
+            weight: '500',
             length: '25',
             breadth: '20',
             height: '3',
@@ -680,14 +697,14 @@ const handleCheckPincode = async (req, res) => {
   } catch (error) {
     console.error('Error checking pincode:', error);
     const pincode = String(req.body?.pincode || req.query?.pincode || '').trim();
-    res.status(200).json({ 
-      success: true, 
-      available: false, 
+    res.status(200).json({
+      success: true,
+      available: false,
       pincode,
       state: '',
       district: '',
       city: '',
-      message: pincode ? `Delivery is currently not available to pincode ${pincode}.` : 'Unable to check delivery availability.' 
+      message: pincode ? `Delivery is currently not available to pincode ${pincode}.` : 'Unable to check delivery availability.'
     });
   }
 };
@@ -782,9 +799,12 @@ router.post('/book', async (req, res) => {
     const formattedId = orderId.startsWith('#') ? orderId : `#${orderId}`;
     const cleanId = orderId.replace('#', '');
 
-    const order = await Order.findOne({
-      $or: [{ orderId: formattedId }, { orderId: cleanId }, { orderId }],
-    });
+    const orderQuery = [{ orderId: formattedId }, { orderId: cleanId }, { orderId }];
+    if (mongoose.Types.ObjectId.isValid(orderId)) {
+      orderQuery.push({ _id: orderId });
+    }
+
+    const order = await Order.findOne({ $or: orderQuery });
 
     if (!order) {
       return res.status(404).json({ success: false, message: `Order ${orderId} not found.` });
@@ -818,9 +838,9 @@ router.post('/book', async (req, res) => {
     const shippingPincode = (req.body.consignee?.pincode || order.shippingAddress?.pincode || '400001').replace(/[^0-9]/g, '');
 
     const effectivePickupAddressId = String(
-      req.body.pickupAddressId || 
-      req.body.pickupAddress?.pickupAddressId || 
-      config.pickupAddressId || 
+      req.body.pickupAddressId ||
+      req.body.pickupAddress?.pickupAddressId ||
+      config.pickupAddressId ||
       '103215'
     );
 
@@ -831,8 +851,8 @@ router.post('/book', async (req, res) => {
     // Determine booking endpoint based on mode
     const isAir = String(mode).toLowerCase() === 'air' || String(mode).toLowerCase() === 'a';
     const bookingEndpoint = isAir
-      ? `https://www.icarry.in/api_add_shipment_air&api_token=${encodeURIComponent(token)}`
-      : `https://www.icarry.in/api_add_shipment_surface&api_token=${encodeURIComponent(token)}`;
+      ? `https://www.icarry.in/api_add_shipment_air?api_token=${encodeURIComponent(token)}`
+      : `https://www.icarry.in/api_add_shipment_surface?api_token=${encodeURIComponent(token)}`;
 
     // Build the official iCarry v19.0 payload
     const bookingParams = new URLSearchParams();
@@ -974,9 +994,12 @@ router.post('/cancel/:orderId', async (req, res) => {
     const formattedId = rawId.startsWith('#') ? rawId : `#${rawId}`;
     const cleanId = rawId.replace('#', '');
 
-    const order = await Order.findOne({
-      $or: [{ orderId: formattedId }, { orderId: cleanId }, { orderId: rawId }],
-    });
+    const cancelQuery = [{ orderId: formattedId }, { orderId: cleanId }, { orderId: rawId }];
+    if (mongoose.Types.ObjectId.isValid(rawId)) {
+      cancelQuery.push({ _id: rawId });
+    }
+
+    const order = await Order.findOne({ $or: cancelQuery });
 
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found.' });
@@ -1010,16 +1033,19 @@ router.get('/track/:orderId', async (req, res) => {
     const formattedId = rawId.startsWith('#') ? rawId : `#${rawId}`;
     const cleanId = rawId.replace('#', '');
 
-    const order = await Order.findOne({
-      $or: [
-        { orderId: formattedId },
-        { orderId: cleanId },
-        { orderId: rawId },
-        { trackingNumber: rawId },
-        { trackingNumber: cleanId },
-        { icarryShipmentId: rawId },
-      ],
-    });
+    const trackQuery = [
+      { orderId: formattedId },
+      { orderId: cleanId },
+      { orderId: rawId },
+      { trackingNumber: rawId },
+      { trackingNumber: cleanId },
+      { icarryShipmentId: rawId },
+    ];
+    if (mongoose.Types.ObjectId.isValid(rawId)) {
+      trackQuery.push({ _id: rawId });
+    }
+
+    const order = await Order.findOne({ $or: trackQuery });
 
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found.' });
@@ -1049,7 +1075,7 @@ router.get('/track/:orderId', async (req, res) => {
         const session = await getActiveSession(config);
         if (session.token) {
           console.log(`[iCarry] Querying live tracking for shipment_id: ${shipmentId} (AWB: ${trackingNumber})...`);
-          const trackRes = await fetch(`https://www.icarry.in/api_track_shipment&api_token=${encodeURIComponent(session.token)}`, {
+          const trackRes = await fetch(`https://www.icarry.in/api_track_shipment?api_token=${encodeURIComponent(session.token)}`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/x-www-form-urlencoded',
@@ -1076,7 +1102,7 @@ router.get('/track/:orderId', async (req, res) => {
               if (data.status.toLowerCase().includes('deliver')) {
                 order.orderStatus = 'Delivered';
               }
-              await order.save().catch(() => {});
+              await order.save().catch(() => { });
             }
           }
         }
@@ -1154,9 +1180,12 @@ router.get('/label/:orderId', async (req, res) => {
     const formattedId = rawId.startsWith('#') ? rawId : `#${rawId}`;
     const cleanId = rawId.replace('#', '');
 
-    const order = await Order.findOne({
-      $or: [{ orderId: formattedId }, { orderId: cleanId }, { orderId: rawId }],
-    });
+    const cancelQuery = [{ orderId: formattedId }, { orderId: cleanId }, { orderId: rawId }];
+    if (mongoose.Types.ObjectId.isValid(rawId)) {
+      cancelQuery.push({ _id: rawId });
+    }
+
+    const order = await Order.findOne({ $or: cancelQuery });
 
     if (!order) {
       return res.status(404).send('Order not found');
