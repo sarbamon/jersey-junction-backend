@@ -15,7 +15,7 @@ function getEnvCredentials() {
   let pickupAddressId = process.env.ICARRY_PICKUP_ADDRESS_ID || process.env.PICKUP_ADDRESS_ID || '';
   let senderPincode = process.env.STORE_PINCODE || process.env.ORIGIN_PINCODE || process.env.PICKUP_PINCODE || '';
   let senderName = process.env.STORE_NAME || '';
-  let senderPhone = process.env.STORE_PHONE || '';
+  let senderPhone = process.env.STORE_PHONE || process.env.WHATSAPP_NO || '';
   let senderAddress = process.env.STORE_ADDRESS || '';
   let senderCity = process.env.STORE_CITY || '';
   let senderState = process.env.STORE_STATE || '';
