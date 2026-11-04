@@ -7,7 +7,7 @@ const User = require('../models/User');
 const { protect, authorize, authorizePermission } = require('../middleware/auth');
 const { adjustProductStock } = require('../utils/inventory');
 const { calculateCartTotals, getStoreSettings } = require('../utils/pricing');
-const { sendOrderConfirmationOtp, sendOrderConfirmationReceipt } = require('../utils/emailService');
+const { sendOrderConfirmationOtp, sendOrderConfirmationReceipt, sendOrderCancellationEmail } = require('../utils/emailService');
 
 // Helper to format backend Mongo order to frontend object
 const formatOrder = (order) => ({
@@ -40,6 +40,7 @@ const formatOrder = (order) => ({
   courierName: order.courierName || '',
   labelUrl: order.labelUrl || '',
   shippingStatus: order.shippingStatus || '',
+  cancellationReason: order.cancellationReason || '',
   bookedAt: order.bookedAt || '',
   packageWeight: order.packageWeight || 0.4,
   packageDimensions: order.packageDimensions || '25x20x3',
@@ -458,7 +459,7 @@ router.post('/', async (req, res, next) => {
 router.patch('/:id/status', protect, authorizePermission('orders'), async (req, res, next) => {
   try {
     const id = req.params.id;
-    const { orderStatus, paymentStatus } = req.body;
+    const { orderStatus, paymentStatus, cancellationReason, reason } = req.body;
     const unhashedId = String(id || '').replace(/^#+/, '');
     const hashedId = `#${unhashedId}`;
 
@@ -483,19 +484,31 @@ router.patch('/:id/status', protect, authorizePermission('orders'), async (req, 
 
     if (orderStatus) {
       order.orderStatus = orderStatus;
-      const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 16);
-      if (!order.timeline.some((t) => t.status === orderStatus)) {
-        order.timeline.push({
-          status: orderStatus,
-          timestamp,
-          note: `Order status changed to ${orderStatus}`,
-        });
+      const cleanReason = (cancellationReason || reason || '').trim();
+      if (orderStatus === 'Cancelled' && cleanReason) {
+        order.cancellationReason = cleanReason;
       }
+
+      const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 16);
+      const timelineNote = (orderStatus === 'Cancelled' && cleanReason)
+        ? `Order cancelled. Reason: ${cleanReason}`
+        : `Order status changed to ${orderStatus}`;
+
+      order.timeline.push({
+        status: orderStatus,
+        timestamp,
+        note: timelineNote,
+      });
 
       // Handle stock adjustments on cancellation and re-activation
       if (previousStatus !== 'Cancelled' && orderStatus === 'Cancelled') {
         // Order was cancelled: restore stock (+1)
         await adjustProductStock(order.items, 1);
+
+        // Send cancellation email to customer
+        sendOrderCancellationEmail(order, cleanReason || 'Cancelled by store administration').catch((err) => {
+          console.error('[EMAIL SERVICE] Failed to send order cancellation email:', err.message);
+        });
       } else if (previousStatus === 'Cancelled' && orderStatus !== 'Cancelled') {
         // Order was uncancelled: deduct stock again (-1)
         await adjustProductStock(order.items, -1);

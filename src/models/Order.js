@@ -134,6 +134,10 @@ const orderSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    cancellationReason: {
+      type: String,
+      default: '',
+    },
     bookedAt: {
       type: String,
       default: '',

@@ -672,6 +672,112 @@ const sendEmployeePasswordResetEmail = async ({ name, email, newPassword }) => {
   });
 };
 
+/**
+ * Sends an Order Cancellation email to the customer with the cancellation reason.
+ */
+const sendOrderCancellationEmail = async (order, reason = '') => {
+  const cleanEmail = (order.email || (order.shippingAddress && order.shippingAddress.email) || '').trim().toLowerCase();
+  if (!cleanEmail) {
+    console.warn('[EMAIL SERVICE] No customer email found to send cancellation notice for order:', order.orderId || order.id);
+    return { success: false, error: 'Customer email missing' };
+  }
+
+  const orderId = order.orderId || order.id || 'N/A';
+  const customerName = order.customerName || (order.shippingAddress && order.shippingAddress.name) || 'Customer';
+  const cleanReason = (reason || order.cancellationReason || 'Cancelled by store administration').trim();
+  const subject = `Order Cancelled - #${orderId}`;
+
+  const items = Array.isArray(order.items) ? order.items : [];
+  const itemsHtml = items.length > 0
+    ? items.map(item => `
+        <tr style="border-bottom: 1px solid #27272a;">
+          <td style="padding: 8px 0; color: #ffffff; font-weight: bold; font-size: 13px;">
+            ${item.name || 'Jersey'} 
+            <span style="color: #a1a1aa; font-size: 11px; font-weight: normal; display: block;">Size: ${item.size || 'M'} &bull; Qty: ${item.quantity || 1}</span>
+          </td>
+          <td style="padding: 8px 0; text-align: right; color: #ffffff; font-family: monospace; font-size: 13px;">
+            ₹${Number((item.unitPrice || item.price || 0) * (item.quantity || 1)).toLocaleString('en-IN')}
+          </td>
+        </tr>
+      `).join('')
+    : '<tr><td colspan="2" style="padding: 8px 0; color: #a1a1aa;">No items listed</td></tr>';
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8"/>
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #000000; color: #ffffff; margin: 0; padding: 24px 12px; }
+        .container { max-width: 580px; margin: 0 auto; background-color: #0c0c0e; border: 1px solid #27272a; border-radius: 16px; overflow: hidden; }
+        .header { background-color: #141416; padding: 24px; text-align: center; border-bottom: 1px solid #27272a; }
+        .brand { color: #f4c84a; font-size: 22px; font-weight: 900; letter-spacing: 2px; margin: 0; text-transform: uppercase; }
+        .body { padding: 32px 24px; }
+        .badge { display: inline-block; padding: 4px 12px; border-radius: 9999px; font-size: 11px; font-weight: 800; text-transform: uppercase; background-color: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); margin-bottom: 16px; }
+        .title { font-size: 20px; font-weight: 900; color: #ffffff; margin: 0 0 12px 0; text-transform: uppercase; }
+        .card { background-color: #141416; border: 1px solid #27272a; border-radius: 12px; padding: 18px; margin: 20px 0; }
+        .reason-box { background-color: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 12px; padding: 16px; margin: 20px 0; }
+        .footer { background-color: #080809; padding: 20px 24px; text-align: center; font-size: 11px; color: #71717a; border-top: 1px solid #27272a; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1 class="brand">JERSEY JUNCTION</h1>
+        </div>
+        <div class="body">
+          <span class="badge">Order Cancelled</span>
+          <h2 class="title">YOUR ORDER HAS BEEN CANCELLED</h2>
+          <p style="color: #d4d4d8; font-size: 14px; line-height: 1.6; margin: 0 0 16px 0;">
+            Hi <strong>${customerName}</strong>,<br/>
+            We regret to inform you that your order <strong>#${orderId}</strong> has been cancelled.
+          </p>
+
+          <div class="reason-box">
+            <span style="font-size: 11px; font-weight: bold; text-transform: uppercase; color: #f87171; display: block; margin-bottom: 4px;">
+              Reason for Cancellation:
+            </span>
+            <p style="margin: 0; color: #ffffff; font-size: 14px; font-weight: 600;">
+              ${cleanReason}
+            </p>
+          </div>
+
+          <div class="card">
+            <span style="font-size: 11px; font-weight: bold; text-transform: uppercase; color: #a1a1aa; display: block; margin-bottom: 12px;">
+              Cancelled Order Summary
+            </span>
+            <table style="width: 100%; border-collapse: collapse;">
+              ${itemsHtml}
+              <tr>
+                <td style="padding: 12px 0 0 0; color: #a1a1aa; font-weight: bold; font-size: 13px;">Total Order Amount:</td>
+                <td style="padding: 12px 0 0 0; text-align: right; color: #f4c84a; font-family: monospace; font-weight: 900; font-size: 16px;">
+                  ₹${Number(order.totalAmount || 0).toLocaleString('en-IN')}
+                </td>
+              </tr>
+            </table>
+          </div>
+
+          <div style="background-color: #121214; border: 1px dashed #3f3f46; border-radius: 12px; padding: 14px; margin-top: 20px; font-size: 12px; color: #a1a1aa; line-height: 1.5;">
+            <strong style="color: #ffffff;">Payment &amp; Refund Notice:</strong><br/>
+            If you completed an online payment (UPI, Card, NetBanking) for this order, the full refund has been initiated and will reflect in your source account within <strong>5 to 7 business days</strong>.
+          </div>
+        </div>
+        <div class="footer">
+          &copy; ${new Date().getFullYear()} Jersey Junction. If you have questions, please reach out to us at <strong>support@jerseyjunction.shop</strong>.
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return await dispatchEmail({
+    to: cleanEmail,
+    customerName,
+    subject,
+    html,
+  });
+};
+
 module.exports = {
   sendOrderConfirmationReceipt,
   sendOrderConfirmationOtp,
@@ -679,6 +785,7 @@ module.exports = {
   sendContactInquiryEmail,
   sendEmployeeWelcomeEmail,
   sendEmployeePasswordResetEmail,
+  sendOrderCancellationEmail,
   getTransporter,
   dispatchEmail,
 };
