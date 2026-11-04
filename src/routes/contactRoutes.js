@@ -11,17 +11,17 @@ router.post('/', async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Your name is required.' });
     }
 
-    if (!email || !email.trim() || !email.includes('@')) {
-      return res.status(400).json({ success: false, message: 'A valid email address is required.' });
-    }
-
     if (!message || !message.trim()) {
       return res.status(400).json({ success: false, message: 'Message content is required.' });
     }
 
+    const resolvedEmail = (email && email.trim() && email.includes('@'))
+      ? email.trim().toLowerCase()
+      : (req.user?.email || 'customer@jerseyjunction.shop');
+
     const result = await sendContactInquiryEmail({
       name: name.trim(),
-      email: email.trim().toLowerCase(),
+      email: resolvedEmail,
       orderNumber: (orderNumber || '').trim(),
       subject: (subject || 'General Inquiry').trim(),
       message: message.trim(),
@@ -30,7 +30,7 @@ router.post('/', async (req, res, next) => {
     if (result && result.success) {
       return res.status(200).json({
         success: true,
-        message: 'Your message has been sent to support@jerseyjunction.shop. We will get back to you shortly!',
+        message: 'Your message has been sent to our support team. We will get back to you shortly!',
       });
     } else {
       return res.status(500).json({
