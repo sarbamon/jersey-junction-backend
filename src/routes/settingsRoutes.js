@@ -5,7 +5,24 @@ const path = require('path');
 
 const SETTINGS_FILE = path.join(__dirname, '../config/store_settings.json');
 
-const envWhatsapp = process.env.WHATSAPP_NO ? process.env.WHATSAPP_NO.trim() : '+91 60011 42358';
+// Helper to extract WHATSAPP_NO directly from backend .env
+function getBackendWhatsappNumber() {
+  try {
+    const envPath = path.join(__dirname, '../../.env');
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf8');
+      const match = content.match(/^WHATSAPP_NO\s*=\s*(.+)$/m);
+      if (match && match[1]) {
+        return match[1].trim().replace(/^["']|["']$/g, '');
+      }
+    }
+  } catch (err) {
+    console.warn('[Settings] Could not read .env file directly:', err.message);
+  }
+  return process.env.WHATSAPP_NO ? process.env.WHATSAPP_NO.trim() : '+91 60011 42358';
+}
+
+const envWhatsapp = getBackendWhatsappNumber();
 
 const DEFAULT_SETTINGS = {
   storeName: 'Jersey Junction',
@@ -33,12 +50,12 @@ const DEFAULT_SETTINGS = {
 };
 
 function readSettings() {
+  const envNum = getBackendWhatsappNumber();
   try {
     if (fs.existsSync(SETTINGS_FILE)) {
       const data = fs.readFileSync(SETTINGS_FILE, 'utf8');
       const loaded = { ...DEFAULT_SETTINGS, ...JSON.parse(data) };
-      if (process.env.WHATSAPP_NO) {
-        const envNum = process.env.WHATSAPP_NO.trim();
+      if (envNum) {
         loaded.storeWhatsapp = envNum;
         if (!loaded.storePhone) loaded.storePhone = envNum;
       }
@@ -47,7 +64,12 @@ function readSettings() {
   } catch (err) {
     console.error('[Settings] Error reading store settings file:', err);
   }
-  return { ...DEFAULT_SETTINGS };
+  const fallback = { ...DEFAULT_SETTINGS };
+  if (envNum) {
+    fallback.storeWhatsapp = envNum;
+    fallback.storePhone = envNum;
+  }
+  return fallback;
 }
 
 function writeSettings(newSettings) {
