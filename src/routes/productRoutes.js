@@ -36,10 +36,10 @@ const formatProduct = (p) => {
   const storeSettings = typeof settingsRoutes.readSettings === 'function' ? settingsRoutes.readSettings() : null;
   const globalCustomJerseyPrice = (typeof storeSettings?.customJerseyPrice === 'number' && storeSettings.customJerseyPrice >= 0)
     ? storeSettings.customJerseyPrice
-    : 250;
+    : 299;
 
   let custPrice = doc.customizationPrice;
-  if (custPrice === undefined || custPrice === null || custPrice === 150) {
+  if (custPrice === undefined || custPrice === null || custPrice === 150 || (custPrice === 250 && globalCustomJerseyPrice !== 250)) {
     custPrice = globalCustomJerseyPrice;
   }
 
@@ -373,6 +373,11 @@ router.post('/', protect, authorizePermission('products'), async (req, res, next
       productData.isCustomizable = Boolean(productData.isCustomizable);
     }
 
+    if (productData.customizationPrice !== undefined) {
+      const num = Number(productData.customizationPrice);
+      productData.customizationPrice = isNaN(num) ? undefined : Math.max(0, num);
+    }
+
     const product = await Product.create(productData);
     res.status(201).json({
       success: true,
@@ -464,6 +469,11 @@ const updateProductHandler = async (req, res, next) => {
 
     if (updateData.isCustomizable !== undefined) {
       updateData.isCustomizable = Boolean(updateData.isCustomizable);
+    }
+
+    if (updateData.customizationPrice !== undefined) {
+      const num = Number(updateData.customizationPrice);
+      updateData.customizationPrice = isNaN(num) ? undefined : Math.max(0, num);
     }
 
     const product = await Product.findOneAndUpdate(query, updateData, {

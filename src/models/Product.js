@@ -97,7 +97,6 @@ const productSchema = new mongoose.Schema(
     },
     customizationPrice: {
       type: Number,
-      default: 250,
     },
     status: {
       type: String,

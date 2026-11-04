@@ -19,7 +19,7 @@ const getStoreSettings = () => {
     standardShippingCharge: 0,
     freeShippingThreshold: 100000,
     codEnabled: false,
-    customJerseyPrice: 250,
+    customJerseyPrice: 299,
   };
 };
 
@@ -144,9 +144,13 @@ const calculateCartTotals = async ({ items, shippingMethod = 'standard', couponC
     const customNameStr = String(item.customName || '').trim();
     const customNumberStr = String(item.customNumber || '').trim();
     const isCustomized = customNameStr.length > 0 || customNumberStr.length > 0;
-    const effectiveCustomPrice = (typeof product.customizationPrice === 'number' && product.customizationPrice >= 0 && product.customizationPrice !== 150)
-      ? product.customizationPrice
-      : (typeof settings.customJerseyPrice === 'number' && settings.customJerseyPrice >= 0 ? settings.customJerseyPrice : (product.customizationPrice ?? 250));
+    const storeCustomPrice = (typeof settings.customJerseyPrice === 'number' && settings.customJerseyPrice >= 0)
+      ? settings.customJerseyPrice
+      : 299;
+    const prodCustomPrice = typeof product.customizationPrice === 'number' ? product.customizationPrice : null;
+    const effectiveCustomPrice = (prodCustomPrice === null || prodCustomPrice === 150 || (prodCustomPrice === 250 && storeCustomPrice !== 250))
+      ? storeCustomPrice
+      : Math.max(0, prodCustomPrice);
     const printExtra = isCustomized ? effectiveCustomPrice : 0;
 
     // 4. Patches surcharge (if any selected patches)
