@@ -486,13 +486,23 @@ router.patch('/:id/status', protect, authorizePermission('orders'), async (req, 
     if (orderStatus) {
       order.orderStatus = orderStatus;
       const cleanReason = (cancellationReason || reason || '').trim();
-      if (orderStatus === 'Cancelled' && cleanReason) {
-        order.cancellationReason = cleanReason;
+      if (orderStatus === 'Cancelled') {
+        if (cleanReason) {
+          order.cancellationReason = cleanReason;
+        }
+      } else {
+        // If moving away from Cancelled, clear cancellationReason
+        order.cancellationReason = '';
+        if (!order.shippingStatus || order.shippingStatus.toLowerCase() === 'cancelled') {
+          order.shippingStatus = order.trackingNumber ? 'In Transit' : 'Not Booked';
+        }
       }
 
       const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 16);
       const timelineNote = (orderStatus === 'Cancelled' && cleanReason)
         ? `Order cancelled. Reason: ${cleanReason}`
+        : (previousStatus === 'Cancelled' && orderStatus !== 'Cancelled')
+        ? `Order un-cancelled and restored to ${orderStatus}`
         : `Order status changed to ${orderStatus}`;
 
       order.timeline.push({
@@ -519,6 +529,7 @@ router.patch('/:id/status', protect, authorizePermission('orders'), async (req, 
         // Order was uncancelled: deduct stock again (-1)
         await adjustProductStock(order.items, -1);
         order.cancellationEmailSent = false;
+        order.cancellationReason = '';
       }
     }
 
@@ -577,6 +588,20 @@ router.patch('/:id', protect, authorizePermission('orders'), async (req, res, ne
     if (orderStatus !== undefined) {
       const prevStatus = order.orderStatus;
       order.orderStatus = orderStatus;
+
+      if (orderStatus !== 'Cancelled') {
+        order.cancellationReason = '';
+      }
+
+      if (prevStatus === 'Cancelled' && orderStatus !== 'Cancelled') {
+        // Order un-cancelled: deduct stock again
+        await adjustProductStock(order.items, -1);
+        order.cancellationEmailSent = false;
+      } else if (prevStatus !== 'Cancelled' && orderStatus === 'Cancelled') {
+        // Order cancelled: restore stock
+        await adjustProductStock(order.items, 1);
+      }
+
       if (prevStatus !== orderStatus && !order.timeline.some((t) => t.status === orderStatus)) {
         order.timeline.push({
           status: orderStatus,
@@ -584,6 +609,9 @@ router.patch('/:id', protect, authorizePermission('orders'), async (req, res, ne
           note: `Order status updated to ${orderStatus}`,
         });
       }
+    }
+    if (req.body.cancellationReason !== undefined) {
+      order.cancellationReason = String(req.body.cancellationReason).trim();
     }
     if (paymentStatus !== undefined) order.paymentStatus = paymentStatus;
     if (paymentMethod !== undefined) order.paymentMethod = paymentMethod;
@@ -593,7 +621,16 @@ router.patch('/:id', protect, authorizePermission('orders'), async (req, res, ne
     if (req.body.labelUrl !== undefined) order.labelUrl = String(req.body.labelUrl).trim();
     if (req.body.shippingStatus !== undefined) order.shippingStatus = String(req.body.shippingStatus).trim();
 
-    if (req.body.trackingNumber && !order.shippingStatus) {
+    // If tracking number is added to a cancelled or unbooked order, restore it to In Transit
+    if (order.trackingNumber && (order.orderStatus === 'Cancelled' || req.body.orderStatus === 'In Transit')) {
+      if (order.orderStatus === 'Cancelled') {
+        await adjustProductStock(order.items, -1);
+        order.cancellationEmailSent = false;
+      }
+      order.orderStatus = 'In Transit';
+      order.cancellationReason = '';
+      order.shippingStatus = 'In Transit';
+    } else if (req.body.trackingNumber && !order.shippingStatus) {
       order.shippingStatus = 'Booked';
     }
 
