@@ -454,15 +454,21 @@ router.post('/', async (req, res, next) => {
   }
 });
 
-// PATCH /api/orders/:id/status - Update order status (Admin only)
-router.patch('/:id/status', protect, authorize('admin'), async (req, res, next) => {
+// PATCH /api/orders/:id/status - Update order status (Admin & Staff with orders permission)
+router.patch('/:id/status', protect, authorizePermission('orders'), async (req, res, next) => {
   try {
     const id = req.params.id;
     const { orderStatus, paymentStatus } = req.body;
-    const formattedSearch = id.startsWith('#') ? id : `#${id}`;
+    const unhashedId = String(id || '').replace(/^#+/, '');
+    const hashedId = `#${unhashedId}`;
 
     let order = await Order.findOne({
-      $or: [{ orderId: id }, { orderId: formattedSearch }],
+      $or: [
+        { orderId: id },
+        { orderId: unhashedId },
+        { orderId: hashedId },
+        { orderId: new RegExp(`^#?${unhashedId}$`, 'i') },
+      ],
     });
 
     if (!order && id.match(/^[0-9a-fA-F]{24}$/)) {
