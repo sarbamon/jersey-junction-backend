@@ -8,8 +8,8 @@ const SETTINGS_FILE = path.join(__dirname, '../config/store_settings.json');
 const DEFAULT_SETTINGS = {
   storeName: 'Jersey Junction',
   storeEmail: 'support@jerseyjunction.com',
-  storePhone: '+91 98765 43210',
-  storeWhatsapp: '+91 60011 42358',
+  storePhone: '+91 70027 40268',
+  storeWhatsapp: '+91 70027 40268',
   storeAddress: '108 Sports Hub Plaza, MG Road, Bengaluru, Karnataka 560001, India',
   shippingCharge: 50,
   freeShippingThreshold: 999,
