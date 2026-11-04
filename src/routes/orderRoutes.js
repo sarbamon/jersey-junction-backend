@@ -41,6 +41,7 @@ const formatOrder = (order) => ({
   labelUrl: order.labelUrl || '',
   shippingStatus: order.shippingStatus || '',
   cancellationReason: order.cancellationReason || '',
+  cancellationEmailSent: Boolean(order.cancellationEmailSent),
   bookedAt: order.bookedAt || '',
   packageWeight: order.packageWeight || 0.4,
   packageDimensions: order.packageDimensions || '25x20x3',
@@ -500,18 +501,24 @@ router.patch('/:id/status', protect, authorizePermission('orders'), async (req, 
         note: timelineNote,
       });
 
-      // Handle stock adjustments on cancellation and re-activation
-      if (previousStatus !== 'Cancelled' && orderStatus === 'Cancelled') {
-        // Order was cancelled: restore stock (+1)
-        await adjustProductStock(order.items, 1);
+      // Handle stock adjustments and customer notification on cancellation
+      if (orderStatus === 'Cancelled') {
+        if (previousStatus !== 'Cancelled') {
+          // Order was newly cancelled: restore product stock (+1)
+          await adjustProductStock(order.items, 1);
+        }
 
-        // Send cancellation email to customer
-        sendOrderCancellationEmail(order, cleanReason || 'Cancelled by store administration').catch((err) => {
-          console.error('[EMAIL SERVICE] Failed to send order cancellation email:', err.message);
-        });
+        // Send cancellation email to customer EXACTLY ONCE
+        if (!order.cancellationEmailSent) {
+          order.cancellationEmailSent = true;
+          sendOrderCancellationEmail(order, cleanReason || 'Cancelled by store administration').catch((err) => {
+            console.error('[EMAIL SERVICE] Failed to send order cancellation email:', err.message);
+          });
+        }
       } else if (previousStatus === 'Cancelled' && orderStatus !== 'Cancelled') {
         // Order was uncancelled: deduct stock again (-1)
         await adjustProductStock(order.items, -1);
+        order.cancellationEmailSent = false;
       }
     }
 

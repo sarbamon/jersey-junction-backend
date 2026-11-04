@@ -138,6 +138,10 @@ const orderSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    cancellationEmailSent: {
+      type: Boolean,
+      default: false,
+    },
     bookedAt: {
       type: String,
       default: '',

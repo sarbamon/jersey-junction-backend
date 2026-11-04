@@ -672,17 +672,30 @@ const sendEmployeePasswordResetEmail = async ({ name, email, newPassword }) => {
   });
 };
 
+// In-memory deduplication tracker to guarantee cancellation emails are never sent more than once per order
+const sentCancellationOrderIds = new Map();
+
 /**
  * Sends an Order Cancellation email to the customer with the cancellation reason.
+ * Strictly deduplicated: will only send exactly 1 time per order.
  */
 const sendOrderCancellationEmail = async (order, reason = '') => {
+  const orderId = String(order.orderId || order.id || 'N/A').replace(/^#+/, '').trim();
   const cleanEmail = (order.email || (order.shippingAddress && order.shippingAddress.email) || '').trim().toLowerCase();
+  
   if (!cleanEmail) {
-    console.warn('[EMAIL SERVICE] No customer email found to send cancellation notice for order:', order.orderId || order.id);
+    console.warn('[EMAIL SERVICE] No customer email found to send cancellation notice for order:', orderId);
     return { success: false, error: 'Customer email missing' };
   }
 
-  const orderId = order.orderId || order.id || 'N/A';
+  // Deduplication check: ignore if sent in the last 15 minutes for this order
+  const now = Date.now();
+  const lastSent = sentCancellationOrderIds.get(orderId);
+  if (lastSent && (now - lastSent) < 15 * 60 * 1000) {
+    console.log(`[EMAIL SERVICE] Deduplication: Cancellation email for #${orderId} was already dispatched ${Math.round((now - lastSent) / 1000)}s ago. Skipping duplicate email.`);
+    return { success: true, deduplicated: true };
+  }
+  sentCancellationOrderIds.set(orderId, now);
   const customerName = order.customerName || (order.shippingAddress && order.shippingAddress.name) || 'Customer';
   const cleanReason = (reason || order.cancellationReason || 'Cancelled by store administration').trim();
   const subject = `Order Cancelled - #${orderId}`;
