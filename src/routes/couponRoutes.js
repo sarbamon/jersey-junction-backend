@@ -3,8 +3,8 @@ const router = express.Router();
 const Coupon = require('../models/Coupon');
 const { protect, authorizePermission } = require('../middleware/auth');
 
-// GET /api/coupons - List all coupons
-router.get('/', async (req, res, next) => {
+// GET /api/coupons - List all coupons (Admin & Staff with 'coupons' permission only)
+router.get('/', protect, authorizePermission('coupons'), async (req, res, next) => {
   try {
     const coupons = await Coupon.find().sort({ createdAt: -1 });
     res.status(200).json({
