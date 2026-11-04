@@ -3,8 +3,9 @@ const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
+const Order = require('../models/Order');
 const SignupOtp = require('../models/SignupOtp');
-const { protect, authorize } = require('../middleware/auth');
+const { protect, authorize, authorizePermission } = require('../middleware/auth');
 const { sendSignupVerificationOtpEmail } = require('../utils/emailService');
 
 const router = express.Router();
@@ -411,16 +412,134 @@ router.get('/logout', protect, (req, res) => {
   res.status(200).json({ success: true, data: {} });
 });
 
+// Helper middleware: Authorize customer directory access for Admin or Employee with 'customers', 'orders', or '*' permission
+const authorizeCustomerAccess = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ success: false, error: 'Authentication required' });
+  }
+  // Boss / Administrator has full access
+  if (req.user.role === 'admin') {
+    return next();
+  }
+  // Staff member / Employee access check
+  if (req.user.role === 'employee') {
+    const perms = Array.isArray(req.user.permissions) ? req.user.permissions : [];
+    if (perms.includes('customers') || perms.includes('orders') || perms.includes('*')) {
+      return next();
+    }
+    return res.status(403).json({
+      success: false,
+      error: "Access denied: Your employee account does not have permission for 'customers'.",
+    });
+  }
+  return res.status(403).json({
+    success: false,
+    error: 'Access denied: Administrative privileges required.',
+  });
+};
+
 // @route   GET /api/auth/users
-// @desc    Get all registered users for admin directory
-// @access  Admin only
-router.get('/users', protect, authorize('admin'), async (req, res, next) => {
+// @desc    Get all registered users and ordering customers for admin directory
+// @access  Admin or Employee with customers/orders permission
+router.get('/users', protect, authorizeCustomerAccess, async (req, res, next) => {
   try {
-    const users = await User.find({ role: { $ne: 'admin' } }).select('-password').sort({ createdAt: -1 });
+    // 1. Fetch registered customer users (excluding admin and staff employees)
+    const registeredUsers = await User.find({ role: { $nin: ['admin', 'employee'] } })
+      .select('-password')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // 2. Fetch orders to compute customer stats and discover ordering customers
+    const orders = await Order.find({}).lean().catch(() => []);
+
+    // Aggregate orders by customer email
+    const ordersByEmail = new Map();
+    for (const order of orders) {
+      const email = String(order.email || '').toLowerCase().trim();
+      if (!email) continue;
+      if (!ordersByEmail.has(email)) {
+        ordersByEmail.set(email, {
+          count: 0,
+          totalSpent: 0,
+          earliestDate: order.createdAt || order.date || new Date(),
+          customerName: order.customerName || order.shippingAddress?.name || '',
+          phone: order.phone || order.shippingAddress?.phone || '',
+          city: order.shippingAddress?.city || '',
+          state: order.shippingAddress?.state || '',
+          country: order.shippingAddress?.country || 'India',
+        });
+      }
+      const agg = ordersByEmail.get(email);
+      agg.count += 1;
+      agg.totalSpent += (Number(order.totalAmount) || 0);
+      if (!agg.phone && (order.phone || order.shippingAddress?.phone)) {
+        agg.phone = order.phone || order.shippingAddress?.phone;
+      }
+      if (!agg.city && order.shippingAddress?.city) {
+        agg.city = order.shippingAddress.city;
+        agg.state = order.shippingAddress.state || '';
+      }
+      if (order.createdAt && (!agg.earliestDate || new Date(order.createdAt) < new Date(agg.earliestDate))) {
+        agg.earliestDate = order.createdAt;
+      }
+    }
+
+    // 3. Build customer list starting with registered users
+    const customersMap = new Map();
+    for (const u of registeredUsers) {
+      const email = String(u.email || '').toLowerCase().trim();
+      const agg = ordersByEmail.get(email);
+      customersMap.set(email, {
+        _id: u._id,
+        id: u._id.toString(),
+        name: u.name || (agg ? agg.customerName : 'Registered Customer'),
+        email: u.email,
+        phone: u.phone || (agg ? agg.phone : ''),
+        city: (agg && agg.city) ? agg.city : 'India',
+        state: (agg && agg.state) ? agg.state : '',
+        country: (agg && agg.country) ? agg.country : 'India',
+        role: u.role || 'user',
+        ordersCount: agg ? agg.count : 0,
+        totalSpent: agg ? agg.totalSpent : 0,
+        createdAt: u.createdAt,
+        joinedDate: u.createdAt ? new Date(u.createdAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        status: u.isBanned || u.status === 'Banned' ? 'Banned' : (u.status || 'Active'),
+        isBanned: Boolean(u.isBanned || u.status === 'Banned'),
+        banReason: u.banReason || '',
+      });
+    }
+
+    // 4. Also include customers who placed orders through checkout
+    for (const [email, agg] of ordersByEmail.entries()) {
+      if (!customersMap.has(email)) {
+        const id = `cust-${Buffer.from(email).toString('hex').slice(0, 10)}`;
+        customersMap.set(email, {
+          _id: id,
+          id: id,
+          name: agg.customerName || email.split('@')[0],
+          email: email,
+          phone: agg.phone || '',
+          city: agg.city || 'India',
+          state: agg.state || '',
+          country: agg.country || 'India',
+          role: 'user',
+          ordersCount: agg.count,
+          totalSpent: agg.totalSpent,
+          createdAt: agg.earliestDate,
+          joinedDate: agg.earliestDate ? new Date(agg.earliestDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+          status: 'Active',
+          isBanned: false,
+          banReason: '',
+        });
+      }
+    }
+
+    const customerList = Array.from(customersMap.values());
+
     res.status(200).json({
       success: true,
-      count: users.length,
-      data: users,
+      count: customerList.length,
+      data: customerList,
     });
   } catch (err) {
     next(err);
@@ -428,11 +547,11 @@ router.get('/users', protect, authorize('admin'), async (req, res, next) => {
 });
 
 // @route   PUT /api/auth/users/:id/ban
-// @desc    Ban or Unban customer account (Admin only)
-// @access  Admin only
-router.put('/users/:id/ban', protect, authorize('admin'), async (req, res, next) => {
+// @desc    Ban or Unban customer account
+// @access  Admin or Employee with customers permission
+router.put('/users/:id/ban', protect, authorizeCustomerAccess, async (req, res, next) => {
   try {
-    const { isBanned, reason } = req.body;
+    const { isBanned, reason, email: inputEmail, name: inputName } = req.body;
     const rawId = String(req.params.id || '').trim();
     let user = null;
     if (mongoose.Types.ObjectId.isValid(rawId)) {
@@ -440,6 +559,25 @@ router.put('/users/:id/ban', protect, authorize('admin'), async (req, res, next)
     }
     if (!user) {
       user = await User.findOne({ email: rawId.toLowerCase() });
+    }
+    if (!user && inputEmail) {
+      user = await User.findOne({ email: inputEmail.toLowerCase().trim() });
+    }
+
+    // If order customer does not yet have a User login record, create one with banned status
+    if (!user) {
+      const emailToUse = (inputEmail || rawId).toLowerCase().trim();
+      if (emailToUse && emailToUse.includes('@')) {
+        user = await User.create({
+          name: inputName || emailToUse.split('@')[0],
+          email: emailToUse,
+          password: await bcrypt.hash(Math.random().toString(), 10),
+          role: 'user',
+          isBanned: Boolean(isBanned),
+          status: isBanned ? 'Banned' : 'Active',
+          banReason: isBanned ? (reason || 'Account suspended by store admin') : '',
+        });
+      }
     }
 
     if (!user) {
@@ -471,10 +609,10 @@ router.put('/users/:id/ban', protect, authorize('admin'), async (req, res, next)
 
 // @route   PUT /api/auth/users/:id/reset-password
 // @desc    Admin manually reset customer password
-// @access  Admin only
-router.put('/users/:id/reset-password', protect, authorize('admin'), async (req, res, next) => {
+// @access  Admin or Employee with customers permission
+router.put('/users/:id/reset-password', protect, authorizeCustomerAccess, async (req, res, next) => {
   try {
-    const { newPassword } = req.body;
+    const { newPassword, email: inputEmail } = req.body;
     const cleanPassword = (newPassword || '').trim();
     if (!cleanPassword || cleanPassword.length < 6) {
       return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
@@ -486,6 +624,9 @@ router.put('/users/:id/reset-password', protect, authorize('admin'), async (req,
     }
     if (!user) {
       user = await User.findOne({ email: rawId.toLowerCase() });
+    }
+    if (!user && inputEmail) {
+      user = await User.findOne({ email: inputEmail.toLowerCase().trim() });
     }
 
     if (!user) {
