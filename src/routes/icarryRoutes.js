@@ -1096,13 +1096,34 @@ router.get('/track/:orderId', async (req, res) => {
             if (data.delivered_datetime) deliveredDateTime = data.delivered_datetime;
             if (Array.isArray(data.details)) liveDetails = data.details;
 
-            // Sync shipping status back to order if status advanced
-            if (data.status && data.status !== order.shippingStatus) {
-              order.shippingStatus = data.status;
-              if (data.status.toLowerCase().includes('deliver')) {
-                order.orderStatus = 'Delivered';
+            // Check if latest scan or details indicate order was cancelled by seller/carrier/customer
+            const cancelScan = (liveDetails || []).find(d => {
+              const text = `${d.notes || ''} ${d.status || ''} ${d.location || ''}`.toLowerCase();
+              return text.includes('cancelled') || text.includes('seller cancelled') || text.includes('rto') || text.includes('cancellation');
+            });
+            const isStatusCancelled = String(data.status || '').toLowerCase().includes('cancel');
+
+            if (cancelScan || isStatusCancelled) {
+              liveStatus = 'Cancelled';
+              order.shippingStatus = 'Cancelled';
+              order.orderStatus = 'Cancelled';
+              if (cancelScan && cancelScan.notes && !order.cancellationReason) {
+                order.cancellationReason = cancelScan.notes;
               }
               await order.save().catch(() => { });
+            } else {
+              // Sync shipping status back to order if status advanced
+              if (data.status && data.status !== order.shippingStatus) {
+                order.shippingStatus = data.status;
+                if (data.status.toLowerCase().includes('deliver')) {
+                  order.orderStatus = 'Delivered';
+                } else if (data.status.toLowerCase().includes('out for delivery')) {
+                  order.orderStatus = 'Out for Delivery';
+                } else if (data.status.toLowerCase().includes('transit') || data.status.toLowerCase().includes('dispatched')) {
+                  order.orderStatus = 'In Transit';
+                }
+                await order.save().catch(() => { });
+              }
             }
           }
         }
@@ -1114,6 +1135,7 @@ router.get('/track/:orderId', async (req, res) => {
     // Helper to format courier internal statuses into clean customer status
     const formatShippingStatus = (st) => {
       if (!st || typeof st !== 'string') return 'Shipping getting ready';
+      if (/cancel|seller\s*cancelled/i.test(st)) return 'Cancelled';
       if (/label\s*generated|manifest\s*generated|softdata\s*upload|shipment\s*created|pickup\s*scheduled/i.test(st)) {
         return 'Shipping getting ready';
       }
@@ -1124,10 +1146,10 @@ router.get('/track/:orderId', async (req, res) => {
     let history = [];
     if (liveDetails.length > 0) {
       history = liveDetails.map((evt, idx) => ({
-        status: formatShippingStatus(evt.notes || liveStatus),
+        status: evt.notes || liveStatus,
         location: evt.location || 'In Transit Hub',
         timestamp: evt.datetime || new Date().toISOString(),
-        details: formatShippingStatus(evt.notes || 'Status update logged by carrier network.'),
+        details: evt.notes || 'Status update logged by carrier network.',
         done: true,
       }));
     } else {
