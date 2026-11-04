@@ -987,7 +987,7 @@ router.post('/book', async (req, res) => {
   }
 });
 
-// POST /api/icarry/cancel/:orderId - Cancel shipment
+// POST /api/icarry/cancel/:orderId - Cancel and unlink iCarry courier shipment from order
 router.post('/cancel/:orderId', async (req, res) => {
   try {
     const rawId = req.params.orderId;
@@ -1006,19 +1006,58 @@ router.post('/cancel/:orderId', async (req, res) => {
     }
 
     const prevTracking = order.trackingNumber;
-    order.shippingStatus = 'Cancelled';
+    const prevShipmentId = order.icarryShipmentId;
+
+    // 1. Attempt to notify iCarry API to cancel remote shipment
+    try {
+      const config = getICarryConfig();
+      const session = await getActiveSession(config);
+      if (session.token && (prevShipmentId || prevTracking)) {
+        await fetch(`https://www.icarry.in/api_cancel_shipment?api_token=${encodeURIComponent(session.token)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            shipment_id: String(prevShipmentId || ''),
+            tracking_number: String(prevTracking || ''),
+            awb: String(prevTracking || ''),
+          }).toString(),
+        }).catch(() => {});
+      }
+    } catch (e) {
+      console.warn('[iCarry] Remote shipment cancellation notice:', e.message);
+    }
+
+    // 2. Clear courier shipment details from the order so it returns to 'Not Booked'
+    order.trackingNumber = '';
+    order.icarryShipmentId = '';
+    order.courierName = '';
+    order.labelUrl = '';
+    order.shippingStatus = 'Not Booked';
+    order.bookedAt = '';
+
+    // 3. Keep customer order active so merchant can re-book! Do NOT cancel the entire order.
+    if (order.orderStatus === 'Shipped' || order.orderStatus === 'Cancelled') {
+      order.orderStatus = 'Order Processed';
+      order.cancellationReason = '';
+    }
+
     order.timeline.push({
       status: order.orderStatus,
       timestamp: new Date().toISOString().replace('T', ' ').substring(0, 16),
-      note: `iCarry shipment (${prevTracking || 'N/A'}) was cancelled by admin.`,
+      note: `iCarry courier shipment (${prevTracking || 'N/A'}) was deleted/unlinked by admin. Order is active and ready to re-book.`,
     });
 
     await order.save();
 
     res.status(200).json({
       success: true,
-      message: 'iCarry shipment cancelled successfully.',
-      data: { orderId: order.orderId, shippingStatus: 'Cancelled' },
+      message: 'iCarry shipment deleted successfully. Order is active and ready to re-book.',
+      data: {
+        orderId: order.orderId,
+        orderStatus: order.orderStatus,
+        shippingStatus: 'Not Booked',
+        trackingNumber: '',
+      },
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

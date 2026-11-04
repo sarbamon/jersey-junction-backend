@@ -32,9 +32,7 @@ const formatOrder = (order) => ({
   totalAmount: order.totalAmount,
   paymentMethod: order.paymentMethod,
   paymentStatus: order.paymentStatus,
-  orderStatus: (String(order.shippingStatus || '').toLowerCase().includes('cancel') || (String(order.cancellationReason || '').trim() !== '' && order.orderStatus !== 'Delivered')) && order.orderStatus !== 'Cancelled'
-    ? 'Cancelled'
-    : order.orderStatus,
+  orderStatus: order.orderStatus,
   date: order.date,
   timeline: order.timeline || [],
   icarryShipmentId: order.icarryShipmentId || '',
