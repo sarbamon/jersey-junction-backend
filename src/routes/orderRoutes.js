@@ -588,6 +588,15 @@ router.patch('/:id', protect, authorizePermission('orders'), async (req, res, ne
     if (paymentStatus !== undefined) order.paymentStatus = paymentStatus;
     if (paymentMethod !== undefined) order.paymentMethod = paymentMethod;
 
+    if (req.body.trackingNumber !== undefined) order.trackingNumber = String(req.body.trackingNumber).trim();
+    if (req.body.courierName !== undefined) order.courierName = String(req.body.courierName).trim();
+    if (req.body.labelUrl !== undefined) order.labelUrl = String(req.body.labelUrl).trim();
+    if (req.body.shippingStatus !== undefined) order.shippingStatus = String(req.body.shippingStatus).trim();
+
+    if (req.body.trackingNumber && !order.shippingStatus) {
+      order.shippingStatus = 'Booked';
+    }
+
     await order.save();
 
     res.status(200).json({
