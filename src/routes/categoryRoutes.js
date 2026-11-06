@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Category = require('../models/Category');
+const Product = require('../models/Product');
 
 // In-memory cache for ultra-fast responses
 let cachedActiveCategories = null;
@@ -118,7 +119,20 @@ router.put('/:id', async (req, res) => {
     if (req.body.image !== undefined && (!req.body.image || !req.body.image.trim())) {
       return res.status(400).json({ success: false, message: 'Category photo is required and cannot be empty.' });
     }
+
+    const oldName = category.name;
+    const newName = req.body.name && req.body.name.trim();
+
     category = await Category.findByIdAndUpdate(category._id, req.body, { new: true, runValidators: true });
+
+    // If category was renamed, synchronize all products assigned to the old category name
+    if (newName && oldName && newName.toLowerCase() !== oldName.toLowerCase()) {
+      await Product.updateMany(
+        { category: new RegExp(`^${oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+        { category: newName, sport: (req.body.slug || newName).toLowerCase() }
+      );
+    }
+
     res.json({ success: true, data: category });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
