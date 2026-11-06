@@ -331,15 +331,9 @@ router.post('/', protect, authorizePermission('products'), async (req, res, next
     productData.slug = finalSlug;
 
     if (productData.category) {
-      const catLower = productData.category.toLowerCase().trim();
-      if (catLower.includes('fan')) {
-        productData.category = 'Fan Version';
-        productData.sport = 'fan version';
-      } else if (catLower.includes('player')) {
-        productData.category = 'Player Version';
-        productData.sport = 'player version';
-      } else {
-        productData.sport = catLower;
+      productData.category = String(productData.category).trim();
+      if (!productData.sport) {
+        productData.sport = productData.category.toLowerCase();
       }
     }
 
@@ -432,15 +426,9 @@ const updateProductHandler = async (req, res, next) => {
       }
     }
     if (updateData.category) {
-      const catLower = updateData.category.toLowerCase().trim();
-      if (catLower.includes('fan')) {
-        updateData.category = 'Fan Version';
-        updateData.sport = 'fan version';
-      } else if (catLower.includes('player')) {
-        updateData.category = 'Player Version';
-        updateData.sport = 'player version';
-      } else {
-        updateData.sport = catLower;
+      updateData.category = String(updateData.category).trim();
+      if (!updateData.sport) {
+        updateData.sport = updateData.category.toLowerCase();
       }
     }
 

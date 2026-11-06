@@ -191,7 +191,7 @@ const calculateCartTotals = async ({ items, shippingMethod = 'standard', couponC
       slug: product.slug,
       name: product.name,
       size: requestedSize,
-      version: versionStr || (isPlayerVersion ? 'Player Edition' : 'Fan Edition'),
+      version: versionStr || (isPlayerVersion ? 'Player Edition' : (product.category || 'Standard Edition')),
       customName: customNameStr,
       customNumber: customNumberStr,
       quantity,

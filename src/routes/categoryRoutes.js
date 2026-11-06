@@ -2,11 +2,6 @@ const express = require('express');
 const router = express.Router();
 const Category = require('../models/Category');
 
-const DEFAULT_CATEGORIES = [
-  { name: 'Player Version', slug: 'player-version', tag: 'Athletic Slim Fit', image: 'https://res.cloudinary.com/mcsohx4p/image/upload/v1792689803/jerseyjunction_uploads/yznaq5f6ciiy3unby7e8.jpg', status: 'Active' },
-  { name: 'Fan Version', slug: 'fan-version', tag: 'Standard Fit', image: 'https://res.cloudinary.com/mcsohx4p/image/upload/v1792689804/jerseyjunction_uploads/tu9yhwz7tuelbg3rmp5d.jpg', status: 'Active' },
-];
-
 // In-memory cache for ultra-fast responses
 let cachedActiveCategories = null;
 let cachedActiveTime = 0;
