@@ -1,5 +1,6 @@
 const express = require('express');
 const Product = require('../models/Product');
+const Category = require('../models/Category');
 const Order = require('../models/Order');
 const { protect, authorize, authorizePermission } = require('../middleware/auth');
 const settingsRoutes = require('./settingsRoutes');
@@ -172,10 +173,29 @@ router.get('/', async (req, res, next) => {
     }
 
     if (category && category !== 'all') {
-      query.$or = [
-        { category: new RegExp(category, 'i') },
-        { sport: new RegExp(category, 'i') },
-      ];
+      const catSlugCandidate = category.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
+      const catDoc = await Category.findOne({
+        $or: [
+          { slug: category },
+          { slug: catSlugCandidate },
+          { name: new RegExp(`^${category.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+        ],
+      }).lean();
+
+      const regexList = [new RegExp(category, 'i')];
+      if (catDoc) {
+        if (catDoc.name && catDoc.name.toLowerCase() !== category.toLowerCase()) {
+          regexList.push(new RegExp(catDoc.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+        }
+        if (catDoc.slug && catDoc.slug.toLowerCase() !== category.toLowerCase()) {
+          regexList.push(new RegExp(catDoc.slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+        }
+      }
+
+      query.$or = regexList.flatMap((r) => [
+        { category: r },
+        { sport: r },
+      ]);
     }
 
     if (team) {
