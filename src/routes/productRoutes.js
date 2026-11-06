@@ -182,15 +182,15 @@ router.get('/', async (req, res, next) => {
         ],
       }).lean();
 
-      const regexList = [new RegExp(category, 'i')];
+      const names = [category, catSlugCandidate];
       if (catDoc) {
-        if (catDoc.name && catDoc.name.toLowerCase() !== category.toLowerCase()) {
-          regexList.push(new RegExp(catDoc.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
-        }
-        if (catDoc.slug && catDoc.slug.toLowerCase() !== category.toLowerCase()) {
-          regexList.push(new RegExp(catDoc.slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
-        }
+        if (catDoc.name) names.push(catDoc.name);
+        if (catDoc.slug) names.push(catDoc.slug);
       }
+
+      const regexList = Array.from(new Set(names.filter(Boolean))).map(
+        (n) => new RegExp(`^${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')
+      );
 
       query.$or = regexList.flatMap((r) => [
         { category: r },
