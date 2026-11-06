@@ -837,12 +837,17 @@ router.post('/book', async (req, res) => {
     const stateCode = normalizeStateCode(rawState);
     const shippingPincode = (req.body.consignee?.pincode || order.shippingAddress?.pincode || '400001').replace(/[^0-9]/g, '');
 
-    const effectivePickupAddressId = String(
+    const rawPickupId = String(
       req.body.pickupAddressId ||
       req.body.pickupAddress?.pickupAddressId ||
       config.pickupAddressId ||
-      '103215'
-    );
+      ''
+    ).trim();
+
+    // Must be a valid positive numeric ID
+    const effectivePickupAddressId = (/^\d+$/.test(rawPickupId) && Number(rawPickupId) > 0)
+      ? rawPickupId
+      : '103215';
 
     const parcelWeightGrams = Number(weight) > 20 ? Math.round(Number(weight)) : Math.round(Number(weight) * 1000);
     const invoiceVal = Math.max(1, Math.round(Number(req.body.invoiceValue || order.totalAmount || 0)));
@@ -934,9 +939,14 @@ router.post('/book', async (req, res) => {
     // IF LIVE BOOKING FAILED TO PRODUCE A REAL TRACKING NUMBER, RETURN DIRECT ERROR!
     // NO FAKE DEMO GENERATION!
     if (!trackingNumber && !shipmentId) {
+      const cleanError = (lastBookingError || '')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
       return res.status(400).json({
         success: false,
-        message: `iCarry direct booking failed: ${lastBookingError || 'iCarry did not return a valid tracking number or shipment ID.'}`,
+        message: `iCarry direct booking failed: ${cleanError || 'iCarry did not return a valid tracking number or shipment ID.'}`,
       });
     }
 
