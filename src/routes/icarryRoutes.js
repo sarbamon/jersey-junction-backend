@@ -810,6 +810,13 @@ router.post('/book', async (req, res) => {
       return res.status(404).json({ success: false, message: `Order ${orderId} not found.` });
     }
 
+    if (order.orderStatus === 'Cancelled' || order.shippingStatus === 'Cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: `Order ${orderId} is cancelled. Shipment booking is disabled for cancelled orders.`,
+      });
+    }
+
     const config = getICarryConfig();
     const isCOD = order.paymentMethod === 'COD' || order.paymentStatus === 'COD' || req.body.isCOD;
 
@@ -1037,35 +1044,36 @@ router.post('/cancel/:orderId', async (req, res) => {
       console.warn('[iCarry] Remote shipment cancellation notice:', e.message);
     }
 
-    // 2. Clear courier shipment details from the order so it returns to 'Not Booked'
+    // 2. Clear courier shipment details from the order
     order.trackingNumber = '';
     order.icarryShipmentId = '';
     order.courierName = '';
     order.labelUrl = '';
-    order.shippingStatus = 'Not Booked';
+    order.shippingStatus = order.orderStatus === 'Cancelled' ? 'Cancelled' : 'Not Booked';
     order.bookedAt = '';
 
-    // 3. Keep customer order active so merchant can re-book! Do NOT cancel the entire order.
-    if (order.orderStatus === 'Shipped' || order.orderStatus === 'Cancelled') {
+    // 3. Keep customer order active if it was not already cancelled
+    if (order.orderStatus === 'Shipped') {
       order.orderStatus = 'Order Processed';
-      order.cancellationReason = '';
     }
 
     order.timeline.push({
       status: order.orderStatus,
       timestamp: new Date().toISOString().replace('T', ' ').substring(0, 16),
-      note: `iCarry courier shipment (${prevTracking || 'N/A'}) was deleted/unlinked by admin. Order is active and ready to re-book.`,
+      note: `iCarry courier shipment (${prevTracking || 'N/A'}) was deleted/unlinked by admin.`,
     });
 
     await order.save();
 
     res.status(200).json({
       success: true,
-      message: 'iCarry shipment deleted successfully. Order is active and ready to re-book.',
+      message: order.orderStatus === 'Cancelled'
+        ? 'iCarry shipment removed from cancelled order.'
+        : 'iCarry shipment deleted successfully. Order is active and ready to re-book.',
       data: {
         orderId: order.orderId,
         orderStatus: order.orderStatus,
-        shippingStatus: 'Not Booked',
+        shippingStatus: order.shippingStatus,
         trackingNumber: '',
       },
     });
@@ -1181,10 +1189,72 @@ router.get('/track/:orderId', async (req, res) => {
       }
     }
 
+    // Fallback: If api_track_shipment didn't yield live scan details, fetch directly from iCarry tracking page using AWB
+    if (liveDetails.length === 0 && trackingNumber) {
+      try {
+        console.log(`[iCarry] Querying live web tracking scans for AWB: ${trackingNumber}...`);
+        const webRes = await fetch(`https://www.icarry.in/track-shipment?awb=${encodeURIComponent(trackingNumber)}`);
+        if (webRes.ok) {
+          let html = await webRes.text();
+          html = html.replace(/\/\*[\s\S]*?\*\//g, '');
+
+          const statusMatch = html.match(/Status\s*:\s*<\/span>\s*<span[^>]*>([^<]+)<\/span>/i);
+          if (statusMatch && statusMatch[1]) {
+            const rawWebStatus = statusMatch[1].trim();
+            if (rawWebStatus) {
+              liveStatus = rawWebStatus;
+              if (rawWebStatus.toLowerCase().includes('deliver')) {
+                order.orderStatus = 'Delivered';
+                order.shippingStatus = 'Delivered';
+                await order.save().catch(() => {});
+              }
+            }
+          }
+
+          const detailsIdx = html.indexOf('exampleShipmentDetails =');
+          if (detailsIdx !== -1) {
+            const start = html.indexOf('{', detailsIdx);
+            const end = html.indexOf('const exampleCurrentStep', start);
+            if (start !== -1 && end !== -1) {
+              const rawObj = html.slice(start, end).trim().replace(/;$/, '');
+              try {
+                const fn = new Function('return ' + rawObj);
+                const obj = fn();
+                if (obj && Array.isArray(obj.events) && obj.events.length > 0) {
+                  liveDetails = obj.events.map((e) => ({
+                    datetime: e.date,
+                    location: e.location,
+                    notes: e.detail,
+                  }));
+                }
+              } catch (parseErr) {
+                console.warn('[iCarry] Failed to parse web scan events:', parseErr.message);
+              }
+            }
+          }
+        }
+      } catch (webErr) {
+        console.warn('[iCarry] Web tracking query warning:', webErr.message);
+      }
+    }
+
+    // Sync order delivered status if indicated by either orderStatus or liveStatus
+    const isDeliveredState = String(order.orderStatus || '').toLowerCase().includes('deliver') || String(liveStatus || '').toLowerCase().includes('deliver');
+    if (isDeliveredState) {
+      liveStatus = 'Delivered';
+      if (order.shippingStatus !== 'Delivered') {
+        order.shippingStatus = 'Delivered';
+        await order.save().catch(() => {});
+      }
+    }
+
     // Helper to format courier internal statuses into clean customer status
     const formatShippingStatus = (st) => {
       if (!st || typeof st !== 'string') return 'Shipping getting ready';
       if (/cancel|seller\s*cancelled/i.test(st)) return 'Cancelled';
+      if (/deliver/i.test(st)) return 'Delivered';
+      if (/out\s*for\s*delivery/i.test(st)) return 'Out for Delivery';
+      if (/transit|dispatched/i.test(st)) return 'In Transit';
       if (/label\s*generated|manifest\s*generated|softdata\s*upload|shipment\s*created|pickup\s*scheduled/i.test(st)) {
         return 'Shipping getting ready';
       }
@@ -1199,6 +1269,14 @@ router.get('/track/:orderId', async (req, res) => {
         location: evt.location || 'In Transit Hub',
         timestamp: evt.datetime || new Date().toISOString(),
         details: evt.notes || 'Status update logged by carrier network.',
+        done: true,
+      }));
+    } else if (Array.isArray(order.timeline) && order.timeline.length > 0) {
+      history = order.timeline.map((t) => ({
+        status: t.status,
+        location: order.shippingAddress?.city ? `${order.shippingAddress.city}` : 'Warehouse Hub',
+        timestamp: t.timestamp || new Date().toISOString(),
+        details: t.note || t.status,
         done: true,
       }));
     } else {
