@@ -91,6 +91,10 @@ const productSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    displayOrder: {
+      type: Number,
+      default: 0,
+    },
     isCustomizable: {
       type: Boolean,
       default: false,

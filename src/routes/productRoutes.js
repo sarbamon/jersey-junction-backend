@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const Product = require('../models/Product');
 const Category = require('../models/Category');
 const Order = require('../models/Order');
@@ -60,21 +61,39 @@ const formatProduct = (p) => {
     sizeStock: doc.sizeStock || {},
     isCustomizable: Boolean(doc.isCustomizable),
     customizationPrice: custPrice,
+    displayOrder: typeof doc.displayOrder === 'number' ? doc.displayOrder : 0,
   };
+};
+
+// Helper to determine if a product is out of stock
+const isProductOutOfStock = (p) => {
+  if (!p) return false;
+  if (p.status === 'Out of Stock') return true;
+  if (typeof p.stock === 'number' && p.stock <= 0) return true;
+  if (p.sizeStock && typeof p.sizeStock === 'object') {
+    const vals = Object.values(p.sizeStock).map(Number).filter((n) => !isNaN(n));
+    if (vals.length > 0 && vals.reduce((a, b) => a + b, 0) <= 0) return true;
+  }
+  return false;
 };
 
 // Pre-warm storefront and admin products cache immediately
 const prewarmProducts = async () => {
   try {
     const [adminProds, storefrontProds, total] = await Promise.all([
-      Product.find().sort({ createdAt: -1 }).lean(),
-      Product.find({ status: { $ne: 'Draft' } }).sort({ createdAt: -1 }).limit(1000).lean(),
+      Product.find().sort({ displayOrder: 1, createdAt: -1 }).lean(),
+      Product.find({ status: { $ne: 'Draft' } }).sort({ displayOrder: 1, createdAt: -1 }).limit(1000).lean(),
       Product.countDocuments({ status: { $ne: 'Draft' } }),
     ]);
     cachedAdminProducts = adminProds.map(formatProduct);
     cachedAdminProductsTime = Date.now();
 
-    cachedStorefrontProducts = storefrontProds.map(formatProduct);
+    // In-stock products first, Out-of-stock products sink to the bottom
+    cachedStorefrontProducts = storefrontProds.map(formatProduct).sort((a, b) => {
+      const aOut = isProductOutOfStock(a) ? 1 : 0;
+      const bOut = isProductOutOfStock(b) ? 1 : 0;
+      return aOut - bOut;
+    });
     cachedStorefrontTotal = total;
     cachedStorefrontTime = Date.now();
     console.log(`Prewarmed ${cachedStorefrontProducts.length} storefront & ${cachedAdminProducts.length} admin products in memory.`);
@@ -92,7 +111,7 @@ router.get('/admin/all', async (req, res, next) => {
     // If cached products exist, return immediately in 0ms and revalidate in background if older than 30s
     if (cachedAdminProducts && cachedAdminProducts.length > 0) {
       if (Date.now() - cachedAdminProductsTime > 30000) {
-        Product.find().sort({ createdAt: -1 }).lean().then((products) => {
+        Product.find().sort({ displayOrder: 1, createdAt: -1 }).lean().then((products) => {
           cachedAdminProducts = products.map(formatProduct);
           cachedAdminProductsTime = Date.now();
         }).catch(() => {});
@@ -108,7 +127,7 @@ router.get('/admin/all', async (req, res, next) => {
     }
 
     // Cold start fetch
-    const products = await Product.find().sort({ createdAt: -1 }).lean();
+    const products = await Product.find().sort({ displayOrder: 1, createdAt: -1 }).lean();
     const formatted = products.map(formatProduct);
     cachedAdminProducts = formatted;
     cachedAdminProductsTime = Date.now();
@@ -144,12 +163,16 @@ router.get('/', async (req, res, next) => {
       // Revalidate in background if older than 30s
       if (Date.now() - cachedStorefrontTime > STOREFRONT_CACHE_TTL) {
         Product.find({ status: { $ne: 'Draft' } })
-          .sort({ createdAt: -1 })
+          .sort({ displayOrder: 1, createdAt: -1 })
           .limit(1000)
           .lean()
           .then(async (products) => {
             const total = await Product.countDocuments({ status: { $ne: 'Draft' } });
-            cachedStorefrontProducts = products.map(formatProduct);
+            cachedStorefrontProducts = products.map(formatProduct).sort((a, b) => {
+              const aOut = isProductOutOfStock(a) ? 1 : 0;
+              const bOut = isProductOutOfStock(b) ? 1 : 0;
+              return aOut - bOut;
+            });
             cachedStorefrontTotal = total;
             cachedStorefrontTime = Date.now();
           })
@@ -219,7 +242,7 @@ router.get('/', async (req, res, next) => {
       const sortBy = sort.split(',').join(' ');
       reqQuery = reqQuery.sort(sortBy);
     } else {
-      reqQuery = reqQuery.sort({ createdAt: -1 });
+      reqQuery = reqQuery.sort({ displayOrder: 1, createdAt: -1 });
     }
 
     const pageNum = parseInt(page, 10);
@@ -232,7 +255,11 @@ router.get('/', async (req, res, next) => {
       reqQuery,
       Product.countDocuments(query),
     ]);
-    const formatted = products.map(formatProduct);
+    const formatted = products.map(formatProduct).sort((a, b) => {
+      const aOut = isProductOutOfStock(a) ? 1 : 0;
+      const bOut = isProductOutOfStock(b) ? 1 : 0;
+      return aOut - bOut;
+    });
 
     if (isDefaultStorefrontQuery) {
       cachedStorefrontProducts = formatted;
@@ -501,6 +528,59 @@ const updateProductHandler = async (req, res, next) => {
     next(err);
   }
 };
+
+// @route   PUT /api/products/reorder
+// @route   POST /api/products/reorder
+// @desc    Update custom display order for products
+// @access  Admin or Products Employee
+const reorderProductsHandler = async (req, res, next) => {
+  try {
+    const { productIds, orders } = req.body;
+    const bulkOps = [];
+
+    if (Array.isArray(productIds) && productIds.length > 0) {
+      productIds.forEach((id, idx) => {
+        if (!id) return;
+        const isObjectId = typeof id === 'string' && id.match(/^[0-9a-fA-F]{24}$/);
+        const query = isObjectId ? { _id: id } : { slug: String(id).toLowerCase() };
+        bulkOps.push({
+          updateOne: {
+            filter: query,
+            update: { $set: { displayOrder: idx } },
+          },
+        });
+      });
+    } else if (Array.isArray(orders) && orders.length > 0) {
+      orders.forEach((item) => {
+        const id = item.id || item._id;
+        if (!id) return;
+        const isObjectId = typeof id === 'string' && id.match(/^[0-9a-fA-F]{24}$/);
+        const query = isObjectId ? { _id: id } : { slug: String(id).toLowerCase() };
+        bulkOps.push({
+          updateOne: {
+            filter: query,
+            update: { $set: { displayOrder: Number(item.displayOrder) || 0 } },
+          },
+        });
+      });
+    }
+
+    if (bulkOps.length > 0) {
+      await Product.bulkWrite(bulkOps);
+      invalidateProductCache();
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Product display order updated successfully.',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+router.put('/reorder', protect, authorizePermission('products'), reorderProductsHandler);
+router.post('/reorder', protect, authorizePermission('products'), reorderProductsHandler);
 
 router.patch('/:id', protect, authorizePermission('products'), updateProductHandler);
 router.put('/:id', protect, authorizePermission('products'), updateProductHandler);
