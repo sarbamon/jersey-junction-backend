@@ -135,10 +135,10 @@ const calculateCartTotals = async ({ items, shippingMethod = 'standard', couponC
       throw error;
     }
 
-    // 2. Edition surcharge: +₹150 for Player version
+    // 2. Edition surcharge: Base price from product in database already reflects edition
     const versionStr = String(item.version || '').trim();
     const isPlayerVersion = /player/i.test(versionStr);
-    const versionExtra = isPlayerVersion ? 150 : 0;
+    const versionExtra = 0;
 
     // 3. Customization surcharge: dynamic custom jersey price
     const customNameStr = String(item.customName || '').trim();

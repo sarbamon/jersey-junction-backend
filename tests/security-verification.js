@@ -86,13 +86,13 @@ async function runSecurityTests() {
     assert(breakdown1.subtotal === 1999, 'Base item subtotal equals database product price (₹1999)');
     assert(breakdown1.totalAmount === 1999, 'Total matches subtotal when shipping is standard (free)');
 
-    // TEST 2: Customization rules (+₹150 for Player version, +₹100 for custom name/number, +patch)
+    // TEST 2: Customization rules (+₹100 for custom name/number, +patch)
     const breakdown2 = await calculateCartTotals({
       items: [
         {
           productId: testProduct.slug,
           quantity: 1,
-          version: 'Player Edition', // +150
+          version: 'Player Edition',
           customName: 'MESSI', // +100
           customNumber: '10',
           selectedPatches: [{ id: 'ucl', price: 120 }], // +120
@@ -100,9 +100,9 @@ async function runSecurityTests() {
       ],
       shippingMethod: 'express', // express shipping +100
     });
-    const expectedUnit = 1999 + 150 + 100 + 120; // 2369
-    const expectedTotal = expectedUnit + 100; // 2469
-    assert(breakdown2.items[0].unitPrice === expectedUnit, `Customized unit price correctly adds Player (+₹150), Print (+₹100), and Patch (+₹120) = ₹${expectedUnit}`);
+    const expectedUnit = 1999 + 100 + 120; // 2219
+    const expectedTotal = expectedUnit + 100; // 2319
+    assert(breakdown2.items[0].unitPrice === expectedUnit, `Customized unit price correctly adds Print (+₹100), and Patch (+₹120) = ₹${expectedUnit}`);
     assert(breakdown2.shippingFee === 100, 'Express shipping fee correctly added (+₹100)');
     assert(breakdown2.totalAmount === expectedTotal, `Authoritative totalAmount equals ₹${expectedTotal}`);
 
